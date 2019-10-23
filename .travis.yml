@@ -22,6 +22,8 @@ matrix:
             - libx11-dev
       script:
         - cmake --version
-        - cmake .
+        - mkdir build
+        - cd build
+        - cmake ..
         - make -j 2
 
