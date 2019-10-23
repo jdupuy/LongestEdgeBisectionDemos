@@ -7,9 +7,12 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-set(CMAKE_CXX_FLAGS "-Wall -Wextra")
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -mbmi -mbmi2")
-set(CMAKE_CXX_FLAGS_DEBUG "-g")
+if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
+  # Update if necessary
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall  -Wextra")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g")
+endif()
+
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 # disable GLFW docs, examples and tests
