@@ -250,14 +250,14 @@ struct OpenGLManager {
     djg_buffer *streams[STREAM_COUNT];
     djg_clock *clocks[CLOCK_COUNT];
 } g_gl = {
-    .programs       = {0},
-    .framebuffers   = {0},
-    .textures       = {0},
-    .vertexArrays   = {0},
-    .buffers        = {0},
-    .uniforms       = {0},
-    .streams        = {NULL},
-    .clocks         = {NULL}
+    {0},
+    {0},
+    {0},
+    {0},
+    {0},
+    {0},
+    {NULL},
+    {NULL}
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1017,8 +1017,8 @@ bool loadSubdBuffer()
  */
 bool loadRenderCmdBuffer()
 {
-    uint drawArraysCmd[8] = {2, 1, 0, 0, 0, 0, 0, 0};
-    uint drawMeshTasksCmd[8] = {1, 0, 0, 0, 0, 0, 0, 0};
+    uint32_t drawArraysCmd[8] = {2, 1, 0, 0, 0, 0, 0, 0};
+    uint32_t drawMeshTasksCmd[8] = {1, 0, 0, 0, 0, 0, 0, 0};
 
     if (glIsBuffer(g_gl.buffers[BUFFER_TERRAIN_DRAW]))
         glDeleteBuffers(1, &g_gl.buffers[BUFFER_TERRAIN_DRAW]);
