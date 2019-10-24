@@ -234,6 +234,7 @@ enum {
     UNIFORM_TERRAIN_TARGET_EDGE_LENGTH,
     UNIFORM_TERRAIN_LOD_FACTOR,
     UNIFORM_TERRAIN_MIN_LOD_VARIANCE,
+    UNIFORM_TERRAIN_SCREEN_RESOLUTION,
 
     UNIFORM_TOPVIEW_DMAP_SAMPLER,
     UNIFORM_TOPVIEW_DMAP_FACTOR,
@@ -380,6 +381,9 @@ void configureTerrainProgram(GLuint glp)
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_MIN_LOD_VARIANCE],
         g_terrain.minLodStdev * g_terrain.minLodStdev / (g_terrain.dmap.scale * g_terrain.dmap.scale));
+    glProgramUniform2f(glp,
+        g_gl.uniforms[UNIFORM_TERRAIN_SCREEN_RESOLUTION],
+        g_framebuffer.w, g_framebuffer.h);
 }
 
 void configureTerrainPrograms()
@@ -502,13 +506,24 @@ bool loadTerrainRenderingProgram(GLuint *glp, const char *flag)
     djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
     if (g_terrain.method == METHOD_TS) {
-        djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderTS.glsl"));
+        if (g_terrain.flags.wire)
+            djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderTS_Wire.glsl"));
+        else
+            djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderTS.glsl"));
     } else if (g_terrain.method == METHOD_GS) {
         int subdLevel = g_terrain.gpuSubd;
-        int vertexCnt = subdLevel == 0 ? 3 : 4 << (2 * subdLevel - 1);
 
-        djgp_push_string(djp, "#define MAX_VERTICES %i\n", vertexCnt);
-        djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderGS.glsl"));
+        if (g_terrain.flags.wire) {
+            int vertexCnt = 3 << (2 * subdLevel);
+
+            djgp_push_string(djp, "#define MAX_VERTICES %i\n", vertexCnt);
+            djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderGS_Wire.glsl"));
+        } else {
+            int vertexCnt = subdLevel == 0 ? 3 : 4 << (2 * subdLevel - 1);
+
+            djgp_push_string(djp, "#define MAX_VERTICES %i\n", vertexCnt);
+            djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderGS.glsl"));
+        }
     }
     else if (g_terrain.method == METHOD_MS) {
         djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderMS.glsl"));
@@ -533,6 +548,8 @@ bool loadTerrainRenderingProgram(GLuint *glp, const char *flag)
         glGetUniformLocation(*glp, "u_TargetEdgeLength");
     g_gl.uniforms[UNIFORM_TERRAIN_MIN_LOD_VARIANCE] =
         glGetUniformLocation(*glp, "u_MinLodVariance");
+    g_gl.uniforms[UNIFORM_TERRAIN_SCREEN_RESOLUTION] =
+        glGetUniformLocation(*glp, "u_ScreenResolution");
 
     configureTerrainProgram(*glp);
 
@@ -1247,9 +1264,6 @@ void renderTerrain()
 
     // render
     glEnable(GL_CULL_FACE);
-    if (g_terrain.flags.wire)
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    glLineWidth(1.0f);
     djgc_start(g_gl.clocks[CLOCK_RENDER]);
     glUseProgram(g_gl.programs[PROGRAM_SPLIT_AND_RENDER + pingPong]);
     glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_EMPTY]);
@@ -1267,14 +1281,11 @@ void renderTerrain()
     glMemoryBarrier(GL_ALL_BARRIER_BITS);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
-    glLineWidth(1.0f);
     djgc_stop(g_gl.clocks[CLOCK_RENDER]);
 
     // reset GL state
     glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
-    if (g_terrain.flags.wire)
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     // mipmap
     djgc_start(g_gl.clocks[CLOCK_MIPMAP]);
@@ -1492,7 +1503,8 @@ void renderViewer()
             } if (ImGui::Checkbox("cull", &g_terrain.flags.cull))
                 loadPrograms();
             ImGui::SameLine();
-            ImGui::Checkbox("wire", &g_terrain.flags.wire);
+            if (ImGui::Checkbox("wire", &g_terrain.flags.wire))
+                loadTerrainRenderingPrograms();
             ImGui::SameLine();
             if (ImGui::Checkbox("freeze", &g_terrain.flags.freeze)) {
                 loadTerrainRenderingPrograms();
