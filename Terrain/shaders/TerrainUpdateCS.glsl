@@ -38,6 +38,7 @@ void main(void)
         // compute target LoD
         vec2 targetLod = LevelOfDetail(triangleVertices);
 
+        // splitting update
 #if FLAG_SPLIT
         if (targetLod.x > 1.0) {
             leb_SplitNodeConforming(node);
@@ -56,10 +57,10 @@ void main(void)
         }
 #endif
 
-        // push node to stack
-        //if (targetLod.y > 0.0) {
+        // push node to stack if it's visible
+        if (targetLod.y > 0.0) {
             writeNodeID(node.id);
-        //}
+        }
     }
 }
 #endif
