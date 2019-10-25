@@ -525,9 +525,8 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
         djgp_push_string(djp, "#ifndef FRAGMENT_SHADER\n#extension GL_NV_mesh_shader : require\n#endif\n");
         djgp_push_string(djp, "#extension GL_NV_shader_thread_group : require\n");
         djgp_push_string(djp, "#extension GL_NV_shader_thread_shuffle : require\n");
-    }
-    if (g_terrain.method == METHOD_MS || g_terrain.method == METHOD_CS)
         djgp_push_string(djp, "#extension GL_NV_gpu_shader5 : require\n");
+    }
     djgp_push_string(djp, "#define BUFFER_BINDING_TERRAIN_VARIABLES %i\n", STREAM_TERRAIN_VARIABLES);
     djgp_push_string(djp, "#define BUFFER_BINDING_MESHLET_VERTICES %i\n", BUFFER_MESHLET_VERTICES);
     djgp_push_string(djp, "#define BUFFER_BINDING_MESHLET_INDEXES %i\n", BUFFER_MESHLET_INDEXES);
