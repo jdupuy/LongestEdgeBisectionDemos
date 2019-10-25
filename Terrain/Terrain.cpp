@@ -1192,9 +1192,7 @@ bool loadMeshletBuffers()
     std::map<uint32_t, uint16_t> hashMap;
     int lebDepth = 2 * g_terrain.gpuSubd;
     int triangleCount = 1 << lebDepth;
-    //int indexCount  = 3  * triangleCount;
     int edgeTessellationFactor = 1 << g_terrain.gpuSubd;
-    //int vertexCount = (edgeTessellationFactor + 1) * (edgeTessellationFactor + 2) / 2;
 
     // compute index and vertex buffer
     for (int i = 0; i < triangleCount; ++i) {
@@ -1216,7 +1214,6 @@ bool loadMeshletBuffers()
                 indexBuffer.push_back(newIndex);
                 hashMap.insert(std::pair<uint32_t, uint16_t>(vertexID, newIndex));
                 vertexBuffer.push_back(dja::vec2(attribArray[0][j], attribArray[1][j]));
-                // LOG("%f %f\n", attribArray[0][j], attribArray[1][j]);
             }
         }
     }
@@ -1499,7 +1496,6 @@ void release()
  */
 void renderTopView()
 {
-
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, g_gl.buffers[BUFFER_LEB]);
