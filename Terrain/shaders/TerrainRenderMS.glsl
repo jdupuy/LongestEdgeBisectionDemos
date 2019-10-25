@@ -8,6 +8,16 @@ by Jonathan Dupuy
 
 #define THREAD_COUNT 32
 
+layout(std430, binding = BUFFER_BINDING_MESHLET_VERTICES)
+readonly buffer MeshletVertexBuffer {
+    vec2 u_MeshletVertexBuffer[];
+};
+
+layout(std430, binding = BUFFER_BINDING_MESHLET_INDEXES)
+readonly buffer MeshletIndexBuffer {
+    uint16_t u_MeshletIndexBuffer[];
+};
+
 /*******************************************************************************
  * Task Shader
  *
@@ -102,7 +112,7 @@ void main()
  */
 #ifdef MESH_SHADER
 layout(local_size_x = THREAD_COUNT) in;
-layout(max_vertices = 3, max_primitives = 1) out;
+layout(max_vertices = MAX_VERTICES, max_primitives = MAX_PRIMITIVES) out;
 layout(triangles) out;
 
 taskNV in Patch{

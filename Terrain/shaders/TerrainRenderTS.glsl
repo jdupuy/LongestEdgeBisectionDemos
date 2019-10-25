@@ -3,7 +3,7 @@ by Jonathan Dupuy
 
     This code has dependencies on the following GLSL sources:
     - TerrainRenderCommon.glsl
-    - leb.glsl
+    - LongestEdgeBisection.glsl
 */
 
 
