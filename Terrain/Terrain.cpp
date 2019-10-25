@@ -1956,13 +1956,23 @@ void renderViewer()
                 gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
                 gpuDt < 1. ? "ms" : " s");
             djgc_ticks(g_gl.clocks[CLOCK_RENDER], &cpuDt, &gpuDt);
-            ImGui::Text("Render    -- CPU: %.3f%s",
-                cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
-                cpuDt < 1. ? "ms" : " s");
-            ImGui::SameLine();
-            ImGui::Text("GPU: %.3f%s",
-                gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
-                gpuDt < 1. ? "ms" : " s");
+            if (g_terrain.method == METHOD_CS) {
+                ImGui::Text("Render    -- CPU: %.3f%s",
+                    cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+                    cpuDt < 1. ? "ms" : " s");
+                ImGui::SameLine();
+                ImGui::Text("GPU: %.3f%s",
+                    gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+                    gpuDt < 1. ? "ms" : " s");
+            } else {
+                ImGui::TextColored(ImVec4(0.5, 0.5, 0.5, 1.0), "Render    -- CPU: %.3f%s",
+                    cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+                    cpuDt < 1. ? "ms" : " s");
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.5, 0.5, 0.5, 1.0), "GPU: %.3f%s",
+                    gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+                    gpuDt < 1. ? "ms" : " s");
+            }
             ImGui::NewLine();
             ImGui::Text("Reduction Details:");
             for (int i = 0; i < g_terrain.maxDepth; ++i) {
