@@ -1780,9 +1780,6 @@ void lebRenderCs()
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB,
                      g_gl.buffers[BUFFER_LEB]);
-    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER,
-                     BUFFER_LEB_NODE_COUNTER,
-                     g_gl.buffers[BUFFER_LEB_NODE_COUNTER]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB_NODE_BUFFER,
                      g_gl.buffers[BUFFER_LEB_NODE_BUFFER]);
@@ -1795,7 +1792,6 @@ void lebRenderCs()
 
     // reset GL state
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, 0);
-    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, BUFFER_LEB_NODE_COUNTER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_NODE_BUFFER, 0);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
