@@ -1241,13 +1241,6 @@ bool loadMeshletBuffers()
                  GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
-                     BUFFER_MESHLET_INDEXES,
-                     g_gl.buffers[BUFFER_MESHLET_INDEXES]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
-                     BUFFER_MESHLET_VERTICES,
-                     g_gl.buffers[BUFFER_MESHLET_VERTICES]);
-
     return (glGetError() == GL_NO_ERROR);
 }
 
