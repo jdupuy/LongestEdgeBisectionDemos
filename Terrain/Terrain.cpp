@@ -1162,7 +1162,7 @@ bool loadRenderCmdBuffer()
  */
 bool loadLebNodeCounterBuffer()
 {
-    uint32_t atomicCounter;
+    uint32_t atomicCounter = 0u;
 
     if (!glIsBuffer(g_gl.buffers[BUFFER_LEB_NODE_COUNTER]))
         glGenBuffers(1, &g_gl.buffers[BUFFER_LEB_NODE_COUNTER]);
@@ -1172,9 +1172,7 @@ bool loadLebNodeCounterBuffer()
                  sizeof(atomicCounter),
                  &atomicCounter,
                  GL_STREAM_DRAW);
-    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER,
-                     BUFFER_LEB_NODE_COUNTER,
-                     g_gl.buffers[BUFFER_LEB_NODE_COUNTER]);
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 
     return (glGetError() == GL_NO_ERROR);
 }
@@ -1269,7 +1267,7 @@ bool loadLebNodeBuffer()
     glBindBuffer(GL_SHADER_STORAGE_BUFFER,
                  g_gl.buffers[BUFFER_LEB_NODE_BUFFER]);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 sizeof(uint32_t) << 20, // 1 MiByte
+                 sizeof(uint32_t) << 20, // 4 MiB
                  NULL,
                  GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -1578,10 +1576,9 @@ void lebBatchingPassTsGs()
                      g_gl.buffers[BUFFER_TERRAIN_DRAW]);
 
     glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_TERRAIN_DRAW, 0);
-
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }
 void lebBatchingPassMs()
 {
@@ -1594,11 +1591,10 @@ void lebBatchingPassMs()
                      g_gl.buffers[BUFFER_TERRAIN_DRAW_MS]);
 
     glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_TERRAIN_DRAW, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_TERRAIN_DRAW_MS, 0);
-
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }
 void lebBatchingPassCs()
 {
@@ -1617,13 +1613,12 @@ void lebBatchingPassCs()
                      g_gl.buffers[BUFFER_LEB_NODE_COUNTER]);
 
     glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_TERRAIN_DRAW, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_TERRAIN_DRAW_CS, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_TERRAIN_DISPATCH_CS, 0);
     glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, BUFFER_LEB_NODE_COUNTER, 0);
-
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }
 void lebBatchingPass()
 {
@@ -1779,9 +1774,6 @@ void lebRenderCs()
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
-                     BUFFER_LEB,
-                     g_gl.buffers[BUFFER_LEB]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB_NODE_BUFFER,
                      g_gl.buffers[BUFFER_LEB_NODE_BUFFER]);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_gl.buffers[BUFFER_TERRAIN_DRAW_CS]);
@@ -1792,13 +1784,11 @@ void lebRenderCs()
     glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_SHORT, BUFFER_OFFSET(0));
 
     // reset GL state
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_NODE_BUFFER, 0);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
     glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
 }
 void lebRender()
 {
@@ -1813,6 +1803,7 @@ void lebRender()
 void renderTerrain()
 {
     djgc_start(g_gl.clocks[CLOCK_ALL]);
+
     loadTerrainVariables();
 
     if (g_terrain.flags.topView) {
@@ -1823,6 +1814,7 @@ void renderTerrain()
     lebReductionPass();
     lebBatchingPass();
     lebRender(); // render pass (if applicable)
+
     djgc_stop(g_gl.clocks[CLOCK_ALL]);
 }
 
