@@ -1887,27 +1887,11 @@ void renderViewer()
         ImGui::Begin("Performance Analysis");
         {
             double cpuDt, gpuDt;
-            uint32_t bufSize = leb__BufferByteSize(g_terrain.maxDepth);
-
-            if (bufSize < (1 << 10)) {
-                ImGui::Text("LEB Buffer Size: %i Bytes", bufSize);
-            } else if (bufSize < (1 << 20)) {
-                ImGui::Text("LEB Buffer Size: %i KBytes", bufSize >> 10);
-            } else {
-                ImGui::Text("LEB Buffer Size: %i MBytes", bufSize >> 20);
-            }
 
             djgc_ticks(g_gl.clocks[CLOCK_ALL], &cpuDt, &gpuDt);
             ImGui::Text("FPS %.3f(CPU) %.3f(GPU)", 1.f / cpuDt, 1.f / gpuDt);
             ImGui::NewLine();
             ImGui::Text("Timings:");
-            ImGui::Text("Frame     -- CPU: %.3f%s",
-                cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
-                cpuDt < 1. ? "ms" : " s");
-            ImGui::SameLine();
-            ImGui::Text("GPU: %.3f%s",
-                gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
-                gpuDt < 1. ? "ms" : " s");
             djgc_ticks(g_gl.clocks[CLOCK_UPDATE], &cpuDt, &gpuDt);
             ImGui::Text("Update    -- CPU: %.3f%s",
                 cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
@@ -1950,6 +1934,16 @@ void renderViewer()
                     gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
                     gpuDt < 1. ? "ms" : " s");
             }
+            djgc_ticks(g_gl.clocks[CLOCK_ALL], &cpuDt, &gpuDt);
+            ImGui::Text("All       -- CPU: %.3f%s",
+                cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+                cpuDt < 1. ? "ms" : " s");
+            ImGui::SameLine();
+            ImGui::Text("GPU: %.3f%s",
+                gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+                gpuDt < 1. ? "ms" : " s");
+            djgc_ticks(g_gl.clocks[CLOCK_UPDATE], &cpuDt, &gpuDt);
+
             ImGui::NewLine();
             ImGui::Text("Reduction Details:");
             for (int i = 0; i < g_terrain.maxDepth; ++i) {
@@ -1971,7 +1965,7 @@ void renderViewer()
 
         // Terrain Parameters
         ImGui::SetNextWindowPos(ImVec2(270, 10), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(320, 210), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(380, 235), ImGuiCond_FirstUseEver);
         ImGui::Begin("Terrain Settings");
         {
             const char* eShadings[] = {
@@ -2011,11 +2005,6 @@ void renderViewer()
             }
             ImGui::SameLine();
             ImGui::Checkbox("TopView", &g_terrain.flags.topView);
-            if (ImGui::SliderInt("PatchSubdLevel", &g_terrain.gpuSubd, 0, 5)) {
-                loadMeshletBuffers();
-                loadMeshletVertexArray();
-                loadPrograms();
-            }
             if (ImGui::SliderFloat("PixelsPerEdge", &g_terrain.primitivePixelLengthTarget, 1, 32)) {
                 configureTerrainPrograms();
             }
@@ -2026,9 +2015,25 @@ void renderViewer()
             if (ImGui::SliderFloat("LodStdev", &g_terrain.minLodStdev, 0.f, 0.005f, "%.4f")) {
                 configureTerrainPrograms();
             }
+            if (ImGui::SliderInt("PatchSubdLevel", &g_terrain.gpuSubd, 0, 6)) {
+                loadMeshletBuffers();
+                loadMeshletVertexArray();
+                loadPrograms();
+            }
             if (ImGui::SliderInt("MaxDepth", &g_terrain.maxDepth, 5, 29)) {
                 loadBuffers();
                 loadPrograms();
+            }
+            {
+                uint32_t bufSize = leb__BufferByteSize(g_terrain.maxDepth);
+
+                if (bufSize < (1 << 10)) {
+                    ImGui::Text("LEB Buffer Size: %i Bytes", bufSize);
+                } else if (bufSize < (1 << 20)) {
+                    ImGui::Text("LEB Buffer Size: %i KBytes", bufSize >> 10);
+                } else {
+                    ImGui::Text("LEB Buffer Size: %i MBytes", bufSize >> 20);
+                }
             }
         }
         ImGui::End();
