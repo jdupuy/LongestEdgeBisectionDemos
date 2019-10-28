@@ -114,7 +114,5 @@ void main()
     float blendFactor = exp2(-nearestDistance / wireScale);
 
     o_FragColor = mix(ShadeFragment(i_TexCoord), wireColor, blendFactor);
-
-    //o_FragColor = texture(u_DmapSampler, i_TexCoord); //vec4(i_TexCoord, 0, 1);
 }
 #endif
