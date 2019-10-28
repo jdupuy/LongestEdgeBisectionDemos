@@ -25,7 +25,6 @@ void main()
 {
     uint nodeID = u_NodeBuffer[gl_InstanceID];
     leb_Node node = leb_Node(nodeID, findMSB(nodeID));
-    //leb_Node node = leb_Node(gl_InstanceID + 2, 1);
     vec4 triangleVertices[3] = DecodeTriangleVertices(node);
     vec4 trianglePositions[3] = vec4[3](
         u_ModelViewProjectionMatrix * vec4(triangleVertices[0].xy, 0.0f, 1.0f),
