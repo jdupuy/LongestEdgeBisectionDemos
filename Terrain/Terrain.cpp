@@ -131,7 +131,7 @@ struct TerrainManager {
     SHADING_DIFFUSE,
     3,
     7.0f,
-    0.0010f,
+    0.1f,
     24,
     8
 };
@@ -325,6 +325,11 @@ char *strcat2(char *dst, const char *src1, const char *src2)
     return strcat(dst, src2);
 }
 
+float sqr(float x)
+{
+    return x * x;
+}
+
 static void APIENTRY
 debug_output_logger(
     GLenum source,
@@ -421,7 +426,7 @@ void configureTerrainProgram(GLuint glp, GLuint offset)
         g_terrain.primitivePixelLengthTarget);
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_MIN_LOD_VARIANCE + offset],
-        g_terrain.minLodStdev * g_terrain.minLodStdev / (g_terrain.dmap.scale * g_terrain.dmap.scale));
+        sqr(g_terrain.minLodStdev / 64.0f / g_terrain.dmap.scale));
     glProgramUniform2f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_SCREEN_RESOLUTION + offset],
         g_framebuffer.w, g_framebuffer.h);
@@ -2012,7 +2017,7 @@ void renderViewer()
                 configureTerrainPrograms();
                 configureTopViewProgram();
             }
-            if (ImGui::SliderFloat("LodStdev", &g_terrain.minLodStdev, 0.f, 0.005f, "%.4f")) {
+            if (ImGui::SliderFloat("LodStdev", &g_terrain.minLodStdev, 0.f, 1.0f, "%.4f")) {
                 configureTerrainPrograms();
             }
             if (ImGui::SliderInt("PatchSubdLevel", &g_terrain.gpuSubd, 0, 6)) {
