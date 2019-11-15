@@ -1089,7 +1089,7 @@ bool loadTerrainVariables()
  */
 bool loadLebBuffer()
 {
-    leb_Memory *leb = leb_Create(g_terrain.maxDepth);
+    leb_Heap *leb = leb_Create(g_terrain.maxDepth);
 
     leb_ResetToDepth(leb, 1);
 
@@ -2033,11 +2033,11 @@ void renderViewer()
                 uint32_t bufSize = leb__BufferByteSize(g_terrain.maxDepth);
 
                 if (bufSize < (1 << 10)) {
-                    ImGui::Text("LEB Buffer Size: %i Bytes", bufSize);
+                    ImGui::Text("LEB heap size: %i Bytes", bufSize);
                 } else if (bufSize < (1 << 20)) {
-                    ImGui::Text("LEB Buffer Size: %i KBytes", bufSize >> 10);
+                    ImGui::Text("LEB heap size: %i KBytes", bufSize >> 10);
                 } else {
-                    ImGui::Text("LEB Buffer Size: %i MBytes", bufSize >> 20);
+                    ImGui::Text("LEB heap size: %i MBytes", bufSize >> 20);
                 }
             }
         }

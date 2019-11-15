@@ -18,13 +18,13 @@ void main(void)
         uint nodeID = threadID + cnt;
 #ifdef LEB_REDUCTION_PREPASS
         uint alignedBitOffset = leb__DataBitID(nodeID, u_PassID);
-        uint bitField = LEB_BUFFER[alignedBitOffset >> 5u];
+        uint bitField = LEB_HEAP[alignedBitOffset >> 5u];
         uint bitData = 0u;
 
         // 2-bits
         bitField = (bitField & 0x55555555u) + ((bitField >> 1u) & 0x55555555u);
         bitData = bitField;
-        LEB_BUFFER[(alignedBitOffset - cnt) >> 5u] = bitData;
+        LEB_HEAP[(alignedBitOffset - cnt) >> 5u] = bitData;
 
         // 3-bits
         bitField = (bitField & 0x33333333u) + ((bitField >>  2u) & 0x33333333u);
