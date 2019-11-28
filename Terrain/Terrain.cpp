@@ -79,14 +79,21 @@ enum {
     TONEMAP_REINHARD,
     TONEMAP_RAW
 };
+enum {
+    PROJECTION_ORTHOGRAPHIC, // no perspective
+    PROJECTION_RECTILINEAR,  // preserves straight lines (OpenGL / DirectX)
+    PROJECTION_FISHEYE       // conformal (stereographic projection)
+};
 struct CameraManager {
-    float fovy, zNear, zFar; // perspective settings
-    int toneMapper;          // tone mapping technique
-    dja::vec3 pos;           // 3D position
-    dja::mat3 axis;          // 3D frame
+    float fovy, zNear, zFar;  // perspective settings
+    int projection;           // controls the projection
+    int tonemap;              // sensor (i.e., tone mapping technique)
+    dja::vec3 pos;            // 3D position
+    dja::mat3 axis;           // 3D frame @deprecated
     float upAngle, sideAngle; // rotation axis
 } g_camera = {
     80.f, 0.01f, 32.f,
+    PROJECTION_RECTILINEAR,
     TONEMAP_RAW,
     INIT_POS,
     dja::mat3(1.0f),
@@ -402,12 +409,30 @@ void configureViewerProgram()
 
 // -----------------------------------------------------------------------------
 // set Terrain program uniforms
+float computeLodFactor()
+{
+    if (g_camera.projection == PROJECTION_RECTILINEAR) {
+        float tmp = 2.0f * tan(radians(g_camera.fovy) / 2.0f)
+            / g_framebuffer.h * (1 << g_terrain.gpuSubd)
+            * g_terrain.primitivePixelLengthTarget;
+
+        return -2.0f * std::log2(tmp) + 2.0f;
+    } else if (g_camera.projection == PROJECTION_ORTHOGRAPHIC) {
+        float planeSize = 2.0f * tan(radians(g_camera.fovy / 2.0f));
+        float targetSize = planeSize * g_terrain.primitivePixelLengthTarget
+                         / g_framebuffer.h * (1 << g_terrain.gpuSubd);
+
+        return -2.0f * std::log2(targetSize);
+    } else if (g_camera.projection == PROJECTION_FISHEYE) {
+        return 1.0f;
+    }
+
+    return 1.0f;
+}
+
 void configureTerrainProgram(GLuint glp, GLuint offset)
 {
-    float tmp = 2.0f * tan(radians(g_camera.fovy) / 2.0f)
-        / g_framebuffer.h * (1 << g_terrain.gpuSubd)
-        * g_terrain.primitivePixelLengthTarget;
-    float lodFactor = -2.0f * std::log2(tmp) + 2.0f;
+    float lodFactor = computeLodFactor();
 
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_DMAP_FACTOR + offset],
@@ -476,7 +501,7 @@ bool loadViewerProgram()
     LOG("Loading {Viewer-Program}\n");
     if (g_framebuffer.aa >= AA_MSAA2 && g_framebuffer.aa <= AA_MSAA16)
         djgp_push_string(djp, "#define MSAA_FACTOR %i\n", 1 << g_framebuffer.aa);
-    switch (g_camera.toneMapper) {
+    switch (g_camera.tonemap) {
     case TONEMAP_UNCHARTED2:
         djgp_push_string(djp, "#define TONEMAP_UNCHARTED2\n");
         break;
@@ -532,6 +557,19 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
         djgp_push_string(djp, "#extension GL_NV_shader_thread_group : require\n");
         djgp_push_string(djp, "#extension GL_NV_shader_thread_shuffle : require\n");
         djgp_push_string(djp, "#extension GL_NV_gpu_shader5 : require\n");
+    }
+    switch (g_camera.projection) {
+    case PROJECTION_RECTILINEAR:
+        djgp_push_string(djp, "#define PROJECTION_RECTILINEAR\n");
+        break;
+    case PROJECTION_FISHEYE:
+        djgp_push_string(djp, "#define PROJECTION_FISHEYE\n");
+        break;
+    case PROJECTION_ORTHOGRAPHIC:
+        djgp_push_string(djp, "#define PROJECTION_ORTHOGRAPHIC\n");
+        break;
+    default:
+        break;
     }
     djgp_push_string(djp, "#define BUFFER_BINDING_TERRAIN_VARIABLES %i\n", STREAM_TERRAIN_VARIABLES);
     djgp_push_string(djp, "#define BUFFER_BINDING_MESHLET_VERTICES %i\n", BUFFER_MESHLET_VERTICES);
@@ -1044,12 +1082,23 @@ bool loadTerrainVariables()
     }
 
     // extract view and projection matrices
-    dja::mat4 projection = dja::mat4::homogeneous::perspective(
-        radians(g_camera.fovy),
-        (float)g_framebuffer.w / (float)g_framebuffer.h,
-        g_camera.zNear,
-        g_camera.zFar
-    );
+    dja::mat4 projection;
+    if (g_camera.projection == PROJECTION_ORTHOGRAPHIC) {
+        float ratio = (float)g_framebuffer.w / (float)g_framebuffer.h;
+        float planeSize = tan(radians(g_camera.fovy / 2.0f));
+
+        projection = dja::mat4::homogeneous::orthographic(
+            -planeSize * ratio, planeSize * ratio, -planeSize, planeSize,
+            g_camera.zNear, g_camera.zFar
+        );
+    } else {
+        projection = dja::mat4::homogeneous::perspective(
+            radians(g_camera.fovy),
+            (float)g_framebuffer.w / (float)g_framebuffer.h,
+            g_camera.zNear, g_camera.zFar
+        );
+    }
+
     dja::mat4 viewInv = dja::mat4::homogeneous::translation(g_camera.pos)
         * dja::mat4::homogeneous::from_mat3(g_camera.axis);
     dja::mat4 view = dja::inverse(viewInv);
@@ -1099,7 +1148,7 @@ bool loadLebBuffer()
     glGenBuffers(1, &g_gl.buffers[BUFFER_LEB]);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_gl.buffers[BUFFER_LEB]);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 leb__BufferByteSize(g_terrain.maxDepth),
+                 leb__HeapByteSize(g_terrain.maxDepth),
                  leb->buffer,
                  GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -1846,10 +1895,15 @@ void renderViewer()
         ImGui::NewFrame();
         // Camera Widget
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(250, 150), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(250, 180), ImGuiCond_FirstUseEver);
         ImGui::Begin("Camera Settings");
         {
-            const char* eToneMappings[] = {
+            const char* eProjections[] = {
+                "Orthographic",
+                "Rectilinear",
+                "Fisheye"
+            };
+            const char* eTonemaps[] = {
                 "Uncharted2",
                 "Filmic",
                 "Aces",
@@ -1863,7 +1917,10 @@ void renderViewer()
                 "MSAAx8",
                 "MSAAx16"
             };
-            if (ImGui::Combo("Sensor", &g_camera.toneMapper, &eToneMappings[0], BUFFER_SIZE(eToneMappings)))
+            if (ImGui::Combo("Projection", &g_camera.projection, &eProjections[0], BUFFER_SIZE(eProjections))) {
+                loadTerrainPrograms();
+            }
+            if (ImGui::Combo("Tonemap", &g_camera.tonemap, &eTonemaps[0], BUFFER_SIZE(eTonemaps)))
                 loadViewerProgram();
             if (ImGui::Combo("AA", &g_framebuffer.aa, &eAA[0], BUFFER_SIZE(eAA))) {
                 loadSceneFramebufferTexture();
@@ -2030,7 +2087,7 @@ void renderViewer()
                 loadPrograms();
             }
             {
-                uint32_t bufSize = leb__BufferByteSize(g_terrain.maxDepth);
+                uint32_t bufSize = leb__HeapByteSize(g_terrain.maxDepth);
 
                 if (bufSize < (1 << 10)) {
                     ImGui::Text("LEB heap size: %i Bytes", bufSize);
