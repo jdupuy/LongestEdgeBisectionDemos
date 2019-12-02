@@ -6,7 +6,6 @@ by Jonathan Dupuy
     - LongestEdgeBisection.glsl
 */
 
-
 /*******************************************************************************
  * Vertex Shader
  *
@@ -32,9 +31,11 @@ out PatchData {
 
 void main()
 {
+    const int lebID = 0;
+
     // get threadID (each triangle is associated to a thread)
     // and extract triangle vertices
-    leb_Node node = leb_DecodeNode(gl_PrimitiveID);
+    leb_Node node = leb_DecodeNode(lebID, gl_PrimitiveID);
     vec4 triangleVertices[3] = DecodeTriangleVertices(node);
 
     // compute target LoD
@@ -43,7 +44,7 @@ void main()
     // splitting pass
 #if FLAG_SPLIT
     if (targetLod.x > 1.0)
-        leb_SplitNodeConforming(node);
+        leb_SplitNodeConforming(lebID, node);
 #endif
 
     // merging pass
@@ -54,7 +55,7 @@ void main()
         bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x < 1.0;
 
         if (shouldMergeBase && shouldMergeTop)
-            leb_MergeNodeConforming(node, diamond);
+            leb_MergeNodeConforming(lebID, node, diamond);
     }
 #endif
 

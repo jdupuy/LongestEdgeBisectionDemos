@@ -576,8 +576,8 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
     djgp_push_string(djp, "#define BUFFER_BINDING_MESHLET_INDEXES %i\n", BUFFER_MESHLET_INDEXES);
     djgp_push_string(djp, "#define TERRAIN_PATCH_SUBD_LEVEL %i\n", g_terrain.gpuSubd);
     djgp_push_string(djp, "#define TERRAIN_PATCH_TESS_FACTOR %i\n", 1 << g_terrain.gpuSubd);
+    djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_string(djp, "#define LEB_MAX_DEPTH %i\n", g_terrain.maxDepth);
     if (g_terrain.shading == SHADING_DIFFUSE)
         djgp_push_string(djp, "#define SHADING_DIFFUSE 1\n");
     else if (g_terrain.shading == SHADING_NORMALS)
@@ -691,8 +691,8 @@ bool loadLebReductionProgram()
     char buf[1024];
 
     LOG("Loading {Reduction-Program}\n");
+    djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_string(djp, "#define LEB_MAX_DEPTH %i\n", g_terrain.maxDepth);
     djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "LongestEdgeBisectionSumReduction.glsl"));
 
@@ -713,8 +713,8 @@ bool loadLebReductionPrepassProgram()
     char buf[1024];
 
     LOG("Loading {Reduction-Prepass-Program}\n");
+    djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_string(djp, "#define LEB_MAX_DEPTH %i\n", g_terrain.maxDepth);
     djgp_push_string(djp, "#define LEB_REDUCTION_PREPASS\n");
     djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "LongestEdgeBisectionSumReduction.glsl"));
@@ -759,7 +759,7 @@ bool loadBatchProgram()
         djgp_push_string(djp, "#define BUFFER_BINDING_LEB_NODE_COUNTER %i\n", BUFFER_LEB_NODE_COUNTER);
         djgp_push_string(djp, "#define MESHLET_INDEX_COUNT %i\n", 3 << (2 * g_terrain.gpuSubd));
     }
-    djgp_push_string(djp, "#define LEB_MAX_DEPTH %i\n", g_terrain.maxDepth);
+    djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_string(djp, "#define BUFFER_BINDING_DRAW_ARRAYS_INDIRECT_COMMAND %i\n", BUFFER_TERRAIN_DRAW);
     djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
@@ -792,8 +792,8 @@ bool loadTopViewProgram()
     djgp_push_string(djp, "#define TERRAIN_PATCH_SUBD_LEVEL %i\n", g_terrain.gpuSubd);
     djgp_push_string(djp, "#define TERRAIN_PATCH_TESS_FACTOR %i\n", 1 << g_terrain.gpuSubd);
     djgp_push_string(djp, "#define BUFFER_BINDING_TERRAIN_VARIABLES %i\n", STREAM_TERRAIN_VARIABLES);
+    djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_string(djp, "#define LEB_MAX_DEPTH %i\n", g_terrain.maxDepth);
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "FrustumCulling.glsl"));
     djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
@@ -1138,7 +1138,7 @@ bool loadTerrainVariables()
  */
 bool loadLebBuffer()
 {
-    leb_Heap *leb = leb_Create(g_terrain.maxDepth);
+    leb_Heap *leb = leb_CreateMinMax(1, g_terrain.maxDepth);
 
     leb_ResetToDepth(leb, 1);
 
@@ -1147,10 +1147,29 @@ bool loadLebBuffer()
         glDeleteBuffers(1, &g_gl.buffers[BUFFER_LEB]);
     glGenBuffers(1, &g_gl.buffers[BUFFER_LEB]);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_gl.buffers[BUFFER_LEB]);
+#if 1
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 leb__HeapByteSize(g_terrain.maxDepth) + 2 * sizeof(int32_t),
+                 NULL,
+                 GL_STATIC_DRAW);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                    0,
+                    sizeof(int32_t),
+                    &leb->minDepth);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                    sizeof(int32_t),
+                    sizeof(int32_t),
+                    &leb->maxDepth);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                    2 * sizeof(int32_t),
+                    leb__HeapByteSize(g_terrain.maxDepth),
+                    leb->buffer);
+#else
     glBufferData(GL_SHADER_STORAGE_BUFFER,
                  leb__HeapByteSize(g_terrain.maxDepth),
                  leb->buffer,
                  GL_STATIC_DRAW);
+#endif
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB,

@@ -32,8 +32,9 @@ out Patch {
 void main()
 {
     // get threadID and decode triangle vertices
+    const int lebID = 0;
     uint threadID = uint(gl_PrimitiveID);
-    leb_Node node = leb_DecodeNode(threadID);
+    leb_Node node = leb_DecodeNode(lebID, threadID);
     vec4 v[3] = DecodeTriangleVertices(node);
 
     // perform frustum culling

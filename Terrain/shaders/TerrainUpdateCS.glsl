@@ -28,11 +28,12 @@ void writeNodeID(uint NodeID)
 void main(void)
 {
     // get threadID
+    const int lebID = 0;
     uint threadID = gl_GlobalInvocationID.x;
 
-    if (threadID < leb_NodeCount()) {
+    if (threadID < leb_NodeCount(lebID)) {
         // and extract triangle vertices
-        leb_Node node = leb_DecodeNode(threadID);
+        leb_Node node = leb_DecodeNode(lebID, threadID);
         vec4 triangleVertices[3] = DecodeTriangleVertices(node);
 
         // compute target LoD
@@ -41,7 +42,7 @@ void main(void)
         // splitting update
 #if FLAG_SPLIT
         if (targetLod.x > 1.0) {
-            leb_SplitNodeConforming(node);
+            leb_SplitNodeConforming(lebID, node);
         }
 #endif
 
@@ -52,7 +53,7 @@ void main(void)
             bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x < 1.0;
 
             if (shouldMergeBase && shouldMergeTop) {
-                leb_MergeNodeConforming(node, diamond);
+                leb_MergeNodeConforming(lebID, node, diamond);
             }
         }
 #endif
