@@ -36,6 +36,22 @@ aux_source_directory(${IMGUI_SRC_DIR} IMGUI_SRC_FILES)
 project (LongestEdgeBisectionDemos)
 
 # ------------------------------------------------------------------------------
+set(DEMO ApiDebug)
+set(SRC_DIR ApiDebug)
+include_directories(${SRC_DIR})
+aux_source_directory(${SRC_DIR} SRC_FILES)
+add_executable(${DEMO} ${IMGUI_SRC_FILES} ${SRC_FILES} ${SRC_DIR}/glad/glad.c)
+target_link_libraries(${DEMO} glfw)
+target_compile_definitions(
+    ${DEMO} PUBLIC
+    -DPATH_TO_SRC_DIRECTORY="${CMAKE_SOURCE_DIR}/${SRC_DIR}/"
+    -DPATH_TO_ASSET_DIRECTORY="${CMAKE_SOURCE_DIR}/assets/"
+    -DPATH_TO_LEB_GLSL_LIBRARY="${CMAKE_SOURCE_DIR}/submodules/LongestEdgeBisection/GLSL/"
+)
+unset(SRC_FILES)
+unset(DEMO)
+
+# ------------------------------------------------------------------------------
 set(DEMO Terrain)
 set(SRC_DIR Terrain)
 include_directories(${SRC_DIR})
@@ -46,8 +62,9 @@ target_compile_definitions(
     ${DEMO} PUBLIC
     -DPATH_TO_SRC_DIRECTORY="${CMAKE_SOURCE_DIR}/${SRC_DIR}/"
     -DPATH_TO_ASSET_DIRECTORY="${CMAKE_SOURCE_DIR}/assets/"
-    -DPATH_TO_LEB_GLSL_LIBRARY="${CMAKE_SOURCE_DIR}/submodules/LongestEdgeBisection/"
+    -DPATH_TO_LEB_GLSL_LIBRARY="${CMAKE_SOURCE_DIR}/submodules/LongestEdgeBisection/GLSL/"
 )
 unset(SRC_FILES)
 unset(DEMO)
+
 
