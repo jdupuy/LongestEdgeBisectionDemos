@@ -44,19 +44,21 @@ void main()
 
     // splitting pass
 #if FLAG_SPLIT
-    if (targetLod.x > 1.0)
-        leb_SplitNodeConforming(lebID, node);
+    if (targetLod.x > 1.0) {
+        leb_SplitNodeConforming_Quad(lebID, node);
+    }
 #endif
 
     // merging pass
 #if FLAG_MERGE
     if (true) {
-        leb_DiamondParent diamond = leb_DecodeDiamondParent(node);
+        leb_DiamondParent diamond = leb_DecodeDiamondParent_Quad(node);
         bool shouldMergeBase = LevelOfDetail(DecodeTriangleVertices(diamond.base)).x < 1.0;
         bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x < 1.0;
 
-        if (shouldMergeBase && shouldMergeTop)
-            leb_MergeNodeConforming(lebID, node, diamond);
+        if (shouldMergeBase && shouldMergeTop) {
+            leb_MergeNodeConforming_Quad(lebID, node, diamond);
+        }
     }
 #endif
 

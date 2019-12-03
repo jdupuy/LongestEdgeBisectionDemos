@@ -27,7 +27,7 @@ uniform float u_MinLodVariance;
 vec4[3] DecodeTriangleVertices(in const leb_Node node)
 {
     vec3 xPos = vec3(0, 0, 1), yPos = vec3(1, 0, 0);
-    mat2x3 pos = leb_DecodeNodeAttributeArray(node, mat2x3(xPos, yPos));
+    mat2x3 pos = leb_DecodeNodeAttributeArray_Quad(node, mat2x3(xPos, yPos));
     vec4 p1 = vec4(pos[0][0], pos[1][0], 0.0, 1.0);
     vec4 p2 = vec4(pos[0][1], pos[1][1], 0.0, 1.0);
     vec4 p3 = vec4(pos[0][2], pos[1][2], 0.0, 1.0);

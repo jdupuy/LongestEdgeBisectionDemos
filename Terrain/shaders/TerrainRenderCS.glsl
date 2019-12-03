@@ -73,6 +73,5 @@ layout(location = 0) out vec4 o_FragColor;
 void main()
 {
     o_FragColor = ShadeFragment(i_TexCoord);
-    //o_FragColor = texture(u_DmapSampler, i_TexCoord); //vec4(i_TexCoord, 0, 1);
 }
 #endif

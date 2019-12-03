@@ -37,7 +37,7 @@ vec2[3] DecodeTriangleTexCoords(in const leb_Node node)
     mat3 xf = mat3(1.0f);
 
     for (int bitID = node.depth - 1; bitID >= 0; --bitID) {
-        xf = leb__SplitMatrix3x3(leb__GetBitValue(node.id, bitID)) * xf;
+        xf = leb__SplittingMatrix(leb__GetBitValue(node.id, bitID)) * xf;
     }
 
     vec3 xPos = vec3(0, 0, 1), yPos = vec3(1, 0, 0);
@@ -94,19 +94,21 @@ void main()
 
     // splitting pass
 #if FLAG_SPLIT
-    if (targetLod.x > 1.0)
-        leb_SplitNodeConforming(lebID, node);
+    if (targetLod.x > 1.0) {
+        leb_SplitNodeConforming_Quad(lebID, node);
+    }
 #endif
 
     // merging pass
 #if FLAG_MERGE
     if (true) {
-        leb_DiamondParent diamond = leb_DecodeDiamondParent(node);
+        leb_DiamondParent diamond = leb_DecodeDiamondParent_Quad(node);
         bool shouldMergeBase = LevelOfDetail(DecodeTriangleVertices(diamond.base)).x < 1.0;
         bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x < 1.0;
 
-        if (shouldMergeBase && shouldMergeTop)
-            leb_MergeNodeConforming(lebID, node, diamond);
+        if (shouldMergeBase && shouldMergeTop) {
+            leb_MergeNodeConforming_Quad(lebID, node, diamond);
+        }
     }
 #endif
 
@@ -217,6 +219,5 @@ void main()
     float blendFactor = exp2(-nearestDistance / wireScale);
 
     o_FragColor = mix(ShadeFragment(i_TexCoord), wireColor, blendFactor);
-    //o_FragColor = mix(vec4(1.0f), wireColor, blendFactor);
 }
 #endif

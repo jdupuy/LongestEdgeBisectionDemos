@@ -12,7 +12,6 @@ uniform atomic_uint u_NodeCounter;
 layout(std430, binding = BUFFER_BINDING_LEB_NODE_BUFFER)
 buffer NodeBuffer {
     uint u_LebNodeBuffer[];
-    //mat4 u_LebNodeBuffer[];
 };
 
 #ifdef COMPUTE_SHADER
@@ -42,18 +41,18 @@ void main(void)
         // splitting update
 #if FLAG_SPLIT
         if (targetLod.x > 1.0) {
-            leb_SplitNodeConforming(lebID, node);
+            leb_SplitNodeConforming_Quad(lebID, node);
         }
 #endif
 
 #if FLAG_MERGE
         if (true) {
-            leb_DiamondParent diamond = leb_DecodeDiamondParent(node);
+            leb_DiamondParent diamond = leb_DecodeDiamondParent_Quad(node);
             bool shouldMergeBase = LevelOfDetail(DecodeTriangleVertices(diamond.base)).x < 1.0;
             bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x < 1.0;
 
             if (shouldMergeBase && shouldMergeTop) {
-                leb_MergeNodeConforming(lebID, node, diamond);
+                leb_MergeNodeConforming_Quad(lebID, node, diamond);
             }
         }
 #endif
