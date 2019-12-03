@@ -368,7 +368,7 @@ void renderGui()
             loadTriangleProgram();
             g_bintree.reset(g_params.minDepth, g_params.maxDepth);
         }
-        if (ImGui::SliderInt("MinDepth", &g_params.minDepth, 0, g_params.maxDepth - 1)) {
+        if (ImGui::SliderInt("MinDepth", &g_params.minDepth, 0, g_params.maxDepth)) {
             g_bintree.reset(g_params.minDepth, g_params.maxDepth);
         }
         if (ImGui::SliderInt("MaxDepth", &g_params.maxDepth, std::max(5, g_params.minDepth), 29)) {
@@ -385,9 +385,13 @@ void renderGui()
         ImGui::Text("Mem Usage: %u Bytes", leb__HeapByteSize(g_params.maxDepth));
         ImGui::Text("Nodes: %u", g_bintree.size());
         ImGui::Text("Bounding Node: %u",
-                    leb_BoundingNode(g_bintree.m_leb,
-                                     g_params.target.x,
-                                     g_params.target.y).id);
+                    g_params.mode == MODE_TRIANGLE ?
+                                    leb_BoundingNode(g_bintree.m_leb,
+                                                     g_params.target.x,
+                                                     g_params.target.y).id
+                                  : leb_BoundingNode_Quad(g_bintree.m_leb,
+                                                          g_params.target.x,
+                                                          g_params.target.y).id);
     }
     ImGui::End();
 
