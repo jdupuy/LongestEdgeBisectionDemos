@@ -851,7 +851,6 @@ bool loadSceneFramebufferTexture()
 
         int maxSamples;
         int maxSamplesDepth;
-        //glGetIntegerv(GL_MAX_INTEGER_SAMPLES, &maxSamples); //Wrong enum !
         glGetIntegerv(GL_MAX_COLOR_TEXTURE_SAMPLES, &maxSamples);
         glGetIntegerv(GL_MAX_DEPTH_TEXTURE_SAMPLES, &maxSamplesDepth);
         maxSamples = maxSamplesDepth < maxSamples ? maxSamplesDepth : maxSamples;
@@ -895,8 +894,8 @@ bool loadSceneFramebufferTexture()
  */
 bool loadLebTexture()
 {
-    const int maxDepth = 5;
-    const int textureResolution = 1024;
+    const int maxDepth = 11;
+    const int textureResolution = 256;
     const int layerCount = 1 << maxDepth;
     djg_texture *djgt = djgt_create(0);
     GLuint glt = 0;
@@ -1058,7 +1057,6 @@ bool loadLebBuffer()
         glDeleteBuffers(1, &g_gl.buffers[BUFFER_LEB]);
     glGenBuffers(1, &g_gl.buffers[BUFFER_LEB]);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_gl.buffers[BUFFER_LEB]);
-#if 1
     glBufferData(GL_SHADER_STORAGE_BUFFER,
                  leb__HeapByteSize(g_terrain.maxDepth) + 2 * sizeof(int32_t),
                  NULL,
@@ -1075,12 +1073,6 @@ bool loadLebBuffer()
                     2 * sizeof(int32_t),
                     leb__HeapByteSize(g_terrain.maxDepth),
                     leb->buffer);
-#else
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 leb__HeapByteSize(g_terrain.maxDepth),
-                 leb->buffer,
-                 GL_STATIC_DRAW);
-#endif
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB,
@@ -1364,8 +1356,7 @@ bool loadSceneFramebuffer()
             GL_TEXTURE_2D_MULTISAMPLE,
             g_gl.textures[TEXTURE_ZBUF],
             0);
-    }
-    else {
+    } else {
         glFramebufferTexture2D(GL_FRAMEBUFFER,
             GL_COLOR_ATTACHMENT0,
             GL_TEXTURE_2D,
@@ -1750,6 +1741,7 @@ void lebRenderCs()
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, g_gl.buffers[BUFFER_LEB]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB_NODE_BUFFER,
                      g_gl.buffers[BUFFER_LEB_NODE_BUFFER]);
@@ -1762,6 +1754,7 @@ void lebRenderCs()
 
     // reset GL state
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_NODE_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, 0);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
     glDisable(GL_CULL_FACE);
