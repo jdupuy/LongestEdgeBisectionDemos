@@ -220,19 +220,11 @@ void triangleToSquare(inout vec2 x)
 vec4 ShadeFragment(vec2 texCoord)
 {
     const int lebID = 0;
-    leb_Node node = leb_BoundingNode_Quad(lebID, texCoord);
-    vec4[3] triangleVertices = DecodeTriangleVertices(node);
-    vec2 P = BarycentricInterpolation(triangleVertices, texCoord).xy;
+    vec2 P;
 
-    triangleToSquare(texCoord);
+    leb_Node node = leb_BoundingNode_Quad(lebID, texCoord, P);
     triangleToSquare(P);
-    vec4 colorData[4] = vec4[4](
-        vec4(1, 0, 0, 1),
-        vec4(1, 1, 0, 1),
-        vec4(1, 0, 1, 1),
-        vec4(0, 1, 0, 1)
-    );
-    //return colorData[node.id % 4];
+
     return texture(u_LebTexture, vec3(P, node.id));
 }
 #endif
