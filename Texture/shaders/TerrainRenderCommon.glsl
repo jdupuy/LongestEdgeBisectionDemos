@@ -13,6 +13,8 @@ uniform PerFrameVariables {
 uniform float u_TargetEdgeLength;
 uniform float u_LodFactor;
 uniform sampler2DArray u_LebTexture;
+uniform sampler2D      u_LebRefTexture;
+
 
 /*******************************************************************************
  * DecodeTriangleVertices -- Decodes the triangle vertices in local space
@@ -206,25 +208,73 @@ ClipSpaceAttribute TessellateClipSpaceTriangle(
  *
  */
 #ifdef FRAGMENT_SHADER
-void triangleToSquare(inout vec2 x)
+void triangleToSquare(inout vec2 p)
 {
-    if (x.y > x.x) {
-        x.y+= x.x;
-        x.x*= 2.0f;
+    if (p.y > p.x) {
+        p.y+= p.x;
+        p.x*= 2.0f;
     } else {
-        x.x+= x.y;
-        x.y*= 2.0f;
+        p.x+= p.y;
+        p.y*= 2.0f;
     }
 }
 
 vec4 ShadeFragment(vec2 texCoord)
 {
+#if defined(SHADING_TEXTURE)
     const int lebID = 0;
     vec2 P;
 
+#   if defined(SAMPLER_BILINEAR)
     leb_Node node = leb_BoundingNode_Quad(lebID, texCoord, P);
     triangleToSquare(P);
 
     return texture(u_LebTexture, vec3(P, node.id));
+
+#   elif defined(SAMPLER_TRILINEAR)
+    leb_NodeAndNeighbors nodeAndNeighbors = leb_BoundingNodeAndNeighbors_Quad(lebID, texCoord, P);
+    vec4 textureData = vec4(0);
+
+    // lookup current triangle
+    vec2 Q = P;
+    triangleToSquare(Q);
+    textureData+= 0.0f * texture(u_LebTexture, vec3(Q, nodeAndNeighbors.node.id));
+    textureData+= 1.0f * textureGrad(u_LebTexture,
+                                     vec3(Q, nodeAndNeighbors.node.id),
+                                     dFdx(texCoord),
+                                     dFdy(texCoord));
+#if 0
+    // lookup neighbors
+    vec2 Q_L = vec2(-P.x, P.y);
+    triangleToSquare(Q_L);
+    textureData+= 0.0f * texture(u_LebTexture, vec3(Q_L, nodeAndNeighbors.left.id));
+
+    vec2 Q_R = vec2(P.x, -P.y);
+    triangleToSquare(Q_R);
+    textureData+= 0.0f * texture(u_LebTexture, vec3(Q_R, nodeAndNeighbors.right.id));
+
+    vec2 Q_E = 1.0f - P;
+    triangleToSquare(Q_E);
+    textureData+= 0.0f * texture(u_LebTexture, vec3(Q_E, nodeAndNeighbors.edge.id));
+#endif
+
+    // return final result
+    return textureData;
+#   else
+    return vec4(1, 0, 0, 1);
+#   endif
+
+
+#elif defined(SHADING_TEXTURE_REF)
+    return texture(u_LebRefTexture, texCoord);
+
+
+#elif defined(SHADING_COLOR)
+    return vec4(1, 1, 1, 1);
+
+
+#else
+    return vec4(1, 0, 0, 1);
+#endif
 }
 #endif

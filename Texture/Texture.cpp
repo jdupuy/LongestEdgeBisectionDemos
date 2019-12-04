@@ -117,7 +117,8 @@ void updateCameraMatrix()
 // -----------------------------------------------------------------------------
 // Terrain Manager
 enum { METHOD_CS, METHOD_TS, METHOD_GS, METHOD_MS };
-enum { SHADING_SNOWY, SHADING_DIFFUSE, SHADING_NORMALS, SHADING_COLOR};
+enum { SAMPLER_BILINEAR, SAMPLER_TRILINEAR};
+enum { SHADING_TEXTURE, SHADING_TEXTURE_REF, SHADING_COLOR};
 struct TerrainManager {
     struct { bool displace, cull, freeze, wire, topView; } flags;
     struct {
@@ -126,6 +127,7 @@ struct TerrainManager {
     } dmap;
     int method;
     int shading;
+    int sampler;
     int gpuSubd;
     float primitivePixelLengthTarget;
     float minLodStdev;
@@ -134,8 +136,9 @@ struct TerrainManager {
 } g_terrain = {
     {true, true, false, false, true},
     {std::string(PATH_TO_ASSET_DIRECTORY "./Terrain4k.png"), 0.2f},
-    METHOD_TS,
-    SHADING_DIFFUSE,
+    METHOD_CS,
+    SHADING_TEXTURE,
+    SAMPLER_BILINEAR,
     6,
     7.0f,
     0.1f,
@@ -234,6 +237,7 @@ enum {
     TEXTURE_CBUF,
     TEXTURE_ZBUF,
     TEXTURE_LEB,
+    TEXTURE_LEB_REF,
     TEXTURE_COUNT
 };
 enum {
@@ -256,18 +260,21 @@ enum {
     UNIFORM_SPLIT_MIN_LOD_VARIANCE,
     UNIFORM_SPLIT_SCREEN_RESOLUTION,
     UNIFORM_SPLIT_LEB_TEXTURE,
+    UNIFORM_SPLIT_LEB_REF_TEXTURE,
 
     UNIFORM_MERGE_TARGET_EDGE_LENGTH,
     UNIFORM_MERGE_LOD_FACTOR,
     UNIFORM_MERGE_MIN_LOD_VARIANCE,
     UNIFORM_MERGE_SCREEN_RESOLUTION,
     UNIFORM_MERGE_LEB_TEXTURE,
+    UNIFORM_MERGE_LEB_REF_TEXTURE,
 
     UNIFORM_RENDER_TARGET_EDGE_LENGTH,
     UNIFORM_RENDER_LOD_FACTOR,
     UNIFORM_RENDER_MIN_LOD_VARIANCE,
     UNIFORM_RENDER_SCREEN_RESOLUTION,
     UNIFORM_RENDER_LEB_TEXTURE,
+    UNIFORM_RENDER_LEB_REF_TEXTURE,
 
     UNIFORM_COUNT
 };
@@ -419,6 +426,9 @@ void configureTerrainProgram(GLuint glp, GLuint offset)
     glProgramUniform1i(glp,
         g_gl.uniforms[UNIFORM_SPLIT_LEB_TEXTURE + offset],
         TEXTURE_LEB);
+    glProgramUniform1i(glp,
+        g_gl.uniforms[UNIFORM_SPLIT_LEB_REF_TEXTURE + offset],
+        TEXTURE_LEB_REF);
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_SPLIT_LOD_FACTOR + offset],
         lodFactor);
@@ -549,13 +559,17 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
     djgp_push_string(djp, "#define TERRAIN_PATCH_TESS_FACTOR %i\n", 1 << g_terrain.gpuSubd);
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    if (g_terrain.shading == SHADING_DIFFUSE)
-        djgp_push_string(djp, "#define SHADING_DIFFUSE 1\n");
-    else if (g_terrain.shading == SHADING_NORMALS)
-        djgp_push_string(djp, "#define SHADING_NORMALS 1\n");
-    else if (g_terrain.shading == SHADING_SNOWY)
-        djgp_push_string(djp, "#define SHADING_SNOWY 1\n");
-    else if (g_terrain.shading == SHADING_COLOR)
+    if (g_terrain.shading == SHADING_TEXTURE) {
+        djgp_push_string(djp, "#define SHADING_TEXTURE 1\n");
+
+        if (g_terrain.sampler == SAMPLER_BILINEAR) {
+            djgp_push_string(djp, "#define SAMPLER_BILINEAR 1\n");
+        } else if (g_terrain.sampler == SAMPLER_TRILINEAR) {
+            djgp_push_string(djp, "#define SAMPLER_TRILINEAR 1\n");
+        }
+    } else if (g_terrain.shading == SHADING_TEXTURE_REF) {
+        djgp_push_string(djp, "#define SHADING_TEXTURE_REF 1\n");
+    } else if (g_terrain.shading == SHADING_COLOR)
         djgp_push_string(djp, "#define SHADING_COLOR 1\n");
     if (g_terrain.flags.displace)
         djgp_push_string(djp, "#define FLAG_DISPLACE 1\n");
@@ -612,6 +626,8 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
 
     g_gl.uniforms[UNIFORM_SPLIT_LEB_TEXTURE + uniformOffset] =
         glGetUniformLocation(*glp, "u_LebTexture");
+    g_gl.uniforms[UNIFORM_SPLIT_LEB_REF_TEXTURE + uniformOffset] =
+        glGetUniformLocation(*glp, "u_LebRefTexture");
     g_gl.uniforms[UNIFORM_SPLIT_LOD_FACTOR + uniformOffset] =
         glGetUniformLocation(*glp, "u_LodFactor");
     g_gl.uniforms[UNIFORM_SPLIT_TARGET_EDGE_LENGTH + uniformOffset] =
@@ -888,26 +904,64 @@ bool loadSceneFramebufferTexture()
 
 // -----------------------------------------------------------------------------
 /**
- * Load the Displacement Texture
+ * Load the LEB Reference Texture
  *
- * This loads an R16 texture used as a displacement map
+ * This loads a regular, high res texture that serves as reference for
+ * the comparison with the leb texture
  */
-bool loadLebTexture()
+bool loadLebRefTexture()
 {
-    const int maxDepth = 11;
-    const int textureResolution = 256;
-    const int layerCount = 1 << maxDepth;
     djg_texture *djgt = djgt_create(0);
-    GLuint glt = 0;
 
     // load the texture
-    djgt_push_image_u8(djgt, PATH_TO_ASSET_DIRECTORY "./debug-texture.png", true);
-    glActiveTexture(GL_TEXTURE1);
-    djgt_to_gl(djgt, GL_TEXTURE_2D, GL_RGBA8, 1, 1, &glt);
+    djgt_push_image_u8(djgt, PATH_TO_ASSET_DIRECTORY "./gtav-map-satellite-huge.png", true);
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_LEB_REF);
+    djgt_to_gl(djgt, GL_TEXTURE_2D, GL_RGBA8, 1, 1, &g_gl.textures[TEXTURE_LEB_REF]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     djgt_release(djgt);
+
+    glActiveTexture(GL_TEXTURE0);
+
+    return (glGetError() == GL_NO_ERROR);
+}
+
+
+// -----------------------------------------------------------------------------
+/**
+ * Load the LEB Texture
+ *
+ * This creates the pages of the LEB texture
+ */
+void configureLebTextureSampler()
+{
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_LEB);
+    switch (g_terrain.sampler) {
+        case SAMPLER_BILINEAR:
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        break;
+        case SAMPLER_TRILINEAR:
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        break;
+        default: break;
+    }
+
+    glActiveTexture(GL_TEXTURE0);
+}
+
+bool loadLebTexture()
+{
+    const int maxDepth = 11;
+    const int textureResolutionLg = 9;
+    const int textureResolution = 1 << textureResolutionLg;
+    const int layerCount = 1 << maxDepth;
 
     // load the program
     djg_program *djgp = djgp_create();
@@ -929,27 +983,41 @@ bool loadLebTexture()
     glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
                  textureResolution, textureResolution, layerCount,
                  0, GL_RED, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindImageTexture(0, g_gl.textures[TEXTURE_LEB], 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA8);
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
     // build
     glUseProgram(glp);
-    glUniform1i(glGetUniformLocation(glp, "u_InputSampler"), 1);
+    glUniform1i(glGetUniformLocation(glp, "u_InputSampler"), TEXTURE_LEB_REF);
     glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_EMPTY]);
-    glViewport(0, 0, textureResolution, textureResolution);
-    glColorMask(0, 0, 0, 0);
-    glDrawArrays(GL_TRIANGLE_STRIP, 4, 4 * layerCount);
-    glDeleteTextures(1, &glt);
+    for (int mipID = textureResolutionLg; mipID >= 0; --mipID) {
+        int textureResolution = 1 << mipID;
+
+        glBindImageTexture(0,
+                           g_gl.textures[TEXTURE_LEB],
+                           textureResolutionLg - mipID,
+                           GL_TRUE,
+                           0,
+                           GL_WRITE_ONLY,
+                           GL_RGBA8);
+        glViewport(0, 0, textureResolution, textureResolution);
+        glColorMask(0, 0, 0, 0);
+            glDrawArrays(GL_TRIANGLE_STRIP, 4, 4 * layerCount);
+        glColorMask(1, 1, 1, 1);
+    }
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
     glDeleteProgram(glp);
-    glColorMask(1, 1, 1, 1);
+    glBindImageTexture(0, 0, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA8);
+    glBindVertexArray(0);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
     glActiveTexture(GL_TEXTURE0);
 
+    configureLebTextureSampler();
+
     return (glGetError() == GL_NO_ERROR);
 }
+
 
 // -----------------------------------------------------------------------------
 /**
@@ -960,6 +1028,7 @@ bool loadTextures()
     bool v = true;
 
     if (v) v &= loadSceneFramebufferTexture();
+    if (v) v &= loadLebRefTexture();
     if (v) v &= loadLebTexture();
 
     return v;
@@ -1050,7 +1119,7 @@ bool loadLebBuffer()
 {
     leb_Heap *leb = leb_CreateMinMax(1, g_terrain.maxDepth);
 
-    leb_ResetToDepth(leb, 1);
+    leb_ResetToDepth(leb, 5);
 
     LOG("Loading {Subd-Buffer}\n");
     if (glIsBuffer(g_gl.buffers[BUFFER_LEB]))
@@ -1954,10 +2023,13 @@ void renderViewer()
         ImGui::Begin("Terrain Settings");
         {
             const char* eShadings[] = {
-                "Snowy",
-                "Diffuse",
-                "Normals",
+                "Texture LEB",
+                "Texture Ref",
                 "Plain Color"
+            };
+            const char* eMinFilters[] = {
+                "Bilinear",
+                "Trilinear"
             };
             std::vector<const char *> ePipelines = {
                 "Compute Shader",
@@ -1967,6 +2039,10 @@ void renderViewer()
             if (GLAD_GL_NV_mesh_shader)
                 ePipelines.push_back("Mesh Shader");
 
+            if (ImGui::Combo("Sampler", &g_terrain.sampler, &eMinFilters[0], BUFFER_SIZE(eMinFilters))) {
+                configureLebTextureSampler();
+                loadTerrainPrograms();
+            }
             if (ImGui::Combo("Shading", &g_terrain.shading, &eShadings[0], BUFFER_SIZE(eShadings)))
                 loadTerrainPrograms();
             if (ImGui::Combo("GPU Pipeline", &g_terrain.method, &ePipelines[0], ePipelines.size())) {
