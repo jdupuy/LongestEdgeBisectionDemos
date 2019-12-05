@@ -15,6 +15,10 @@ uniform float u_LodFactor;
 uniform sampler2DArray u_LebTexture;
 uniform sampler2D      u_LebRefTexture;
 
+uniform LebTextureBuffer {
+    uvec2 Texture[2048];
+} LebTexture;
+
 
 /*******************************************************************************
  * DecodeTriangleVertices -- Decodes the triangle vertices in local space
@@ -210,7 +214,7 @@ ClipSpaceAttribute TessellateClipSpaceTriangle(
 #ifdef FRAGMENT_SHADER
 void triangleToSquare(inout vec2 p)
 {
-    if (p.y > p.x) {
+    if (p.x < p.y) {
         p.y+= p.x;
         p.x*= 2.0f;
     } else {
@@ -219,30 +223,47 @@ void triangleToSquare(inout vec2 p)
     }
 }
 
+void triangleToSquareGrad(inout vec2 p, inout vec2 dpdx, inout vec2 dpdy)
+{
+    if (p.x < p.y) {
+        p.y+= p.x;
+        p.x*= 2.0f;
+        dpdy+= dpdx;
+        dpdx*= 2.0f;
+    } else {
+        p.x+= p.y;
+        p.y*= 2.0f;
+        dpdx+= dpdy;
+        dpdy*= 2.0f;
+    }
+}
+
 vec4 ShadeFragment(vec2 texCoord)
 {
 #if defined(SHADING_TEXTURE)
     const int lebID = 0;
-    vec2 P;
 
 #   if defined(SAMPLER_BILINEAR)
+    vec2 P = texCoord;
     leb_Node node = leb_BoundingNode_Quad(lebID, texCoord, P);
     triangleToSquare(P);
 
     return texture(u_LebTexture, vec3(P, node.id));
 
 #   elif defined(SAMPLER_TRILINEAR)
-    leb_NodeAndNeighbors nodeAndNeighbors = leb_BoundingNodeAndNeighbors_Quad(lebID, texCoord, P);
-    vec4 textureData = vec4(0);
+    vec2 P = texCoord;
+    vec2 dPdx = dFdx(texCoord);
+    vec2 dPdy = dFdy(texCoord);
+    leb_Node node = leb_BoundingNode_Quad(lebID, P, dPdx, dPdy);
+
+    //dPdx = dFdx(texCoord) * float((node.depth >> 1));
+    //dPdy = dFdy(texCoord) * float((node.depth >> 1));
 
     // lookup current triangle
-    vec2 Q = P;
-    triangleToSquare(Q);
-    textureData+= 0.0f * texture(u_LebTexture, vec3(Q, nodeAndNeighbors.node.id));
-    textureData+= 1.0f * textureGrad(u_LebTexture,
-                                     vec3(Q, nodeAndNeighbors.node.id),
-                                     dFdx(texCoord),
-                                     dFdy(texCoord));
+    triangleToSquareGrad(P, dPdx, dPdy);
+
+    return textureGrad(u_LebTexture, vec3(P, node.id), dPdx, dPdy);
+
 #if 0
     // lookup neighbors
     vec2 Q_L = vec2(-P.x, P.y);
@@ -258,8 +279,6 @@ vec4 ShadeFragment(vec2 texCoord)
     textureData+= 0.0f * texture(u_LebTexture, vec3(Q_E, nodeAndNeighbors.edge.id));
 #endif
 
-    // return final result
-    return textureData;
 #   else
     return vec4(1, 0, 0, 1);
 #   endif

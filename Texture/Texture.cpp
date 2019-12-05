@@ -237,6 +237,7 @@ enum {
     TEXTURE_CBUF,
     TEXTURE_ZBUF,
     TEXTURE_LEB,
+    TEXTURE_LEB_BINDLESS,
     TEXTURE_LEB_REF,
     TEXTURE_COUNT
 };
@@ -539,6 +540,7 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
         djgp_push_string(djp, "#extension GL_NV_shader_thread_shuffle : require\n");
         djgp_push_string(djp, "#extension GL_NV_gpu_shader5 : require\n");
     }
+    djgp_push_string(djp, "#extension GL_ARB_bindless_texture : require\n");
     switch (g_camera.projection) {
     case PROJECTION_RECTILINEAR:
         djgp_push_string(djp, "#define PROJECTION_RECTILINEAR\n");
@@ -920,6 +922,7 @@ bool loadLebRefTexture()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 1.f);
     djgt_release(djgt);
 
     glActiveTexture(GL_TEXTURE0);
@@ -937,15 +940,15 @@ bool loadLebRefTexture()
 void configureLebTextureSampler()
 {
     glActiveTexture(GL_TEXTURE0 + TEXTURE_LEB);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     switch (g_terrain.sampler) {
         case SAMPLER_BILINEAR:
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         break;
         case SAMPLER_TRILINEAR:
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 16.f);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -957,6 +960,69 @@ void configureLebTextureSampler()
 }
 
 bool loadLebTexture()
+{
+    const int maxDepth = 11;
+    const int textureResolutionLg = 9;
+    const int textureResolution = 1 << textureResolutionLg;
+    const int layerCount = 1 << maxDepth;
+
+    // load the program
+    djg_program *djgp = djgp_create();
+    GLuint glp = 0;
+    char buf[1024];
+
+    djgp_push_file(djgp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djgp, strcat2(buf, g_app.dir.shader, "TextureGeneration.glsl"));
+    if (!djgp_to_gl(djgp, 450, false, true, &glp)) {
+        djgp_release(djgp);
+
+        return false;
+    }
+    djgp_release(djgp);
+
+    glGenTextures(1, &g_gl.textures[TEXTURE_LEB]);
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_LEB);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, g_gl.textures[TEXTURE_LEB]);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
+                 textureResolution, textureResolution, layerCount,
+                 0, GL_RED, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+
+    // build
+    glUseProgram(glp);
+    glUniform1i(glGetUniformLocation(glp, "u_InputSampler"), TEXTURE_LEB_REF);
+    glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_EMPTY]);
+    for (int mipID = textureResolutionLg; mipID >= 0; --mipID) {
+        int textureResolution = 1 << mipID;
+
+        glBindImageTexture(0,
+                           g_gl.textures[TEXTURE_LEB],
+                           textureResolutionLg - mipID,
+                           GL_TRUE,
+                           0,
+                           GL_WRITE_ONLY,
+                           GL_RGBA8);
+        glViewport(0, 0, textureResolution, textureResolution);
+        glColorMask(0, 0, 0, 0);
+            glDrawArrays(GL_TRIANGLE_STRIP, 4, 4 * layerCount);
+        glColorMask(1, 1, 1, 1);
+    }
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    glDeleteProgram(glp);
+    glBindImageTexture(0, 0, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA8);
+    glBindVertexArray(0);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+    glActiveTexture(GL_TEXTURE0);
+
+    configureLebTextureSampler();
+
+    return (glGetError() == GL_NO_ERROR);
+}
+
+
+bool loadLebBindlessTexture()
 {
     const int maxDepth = 11;
     const int textureResolutionLg = 9;
@@ -1119,7 +1185,7 @@ bool loadLebBuffer()
 {
     leb_Heap *leb = leb_CreateMinMax(1, g_terrain.maxDepth);
 
-    leb_ResetToDepth(leb, 5);
+    leb_ResetToDepth(leb, 1);
 
     LOG("Loading {Subd-Buffer}\n");
     if (glIsBuffer(g_gl.buffers[BUFFER_LEB]))
