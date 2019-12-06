@@ -52,6 +52,13 @@ TerrainData LoadTerrainData(ivec2 P)
     return data;
 }
 
+// detail map data lookup
+struct DetailData {
+    float z;
+    vec3 albedo;
+    float dzdx;
+    float dzdy;
+};
 
 
 #ifdef COMPUTE_SHADER
