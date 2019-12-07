@@ -16,3 +16,6 @@
 [submodule "submodules/LongestEdgeBisection"]
 	path = submodules/LongestEdgeBisection
 	url = https://github.com/jdupuy/LongestEdgeBisection.git
+[submodule "submodules/GPU-Noise-Lib"]
+	path = submodules/GPU-Noise-Lib
+	url = https://github.com/BrianSharpe/GPU-Noise-Lib.git
