@@ -28,8 +28,18 @@
 
 #define VIEWPORT_WIDTH 800
 
+// default path to the directory holding the source files
 #ifndef PATH_TO_SRC_DIRECTORY
 #   define PATH_TO_SRC_DIRECTORY "./"
+#endif
+#ifndef PATH_TO_ASSET_DIRECTORY
+#   define PATH_TO_ASSET_DIRECTORY "../assets/"
+#endif
+#ifndef PATH_TO_LEB_GLSL_LIBRARY
+#   define PATH_TO_LEB_GLSL_LIBRARY "./"
+#endif
+#ifndef PATH_TO_NOISE_GLSL_LIBRARY
+#   define PATH_TO_NOISE_GLSL_LIBRARY "./"
 #endif
 
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
@@ -78,11 +88,11 @@ struct TextureGenerator {
         {
             PATH_TO_ASSET_DIRECTORY "./rock_05_bump_1k.png",
             PATH_TO_ASSET_DIRECTORY "./rock_05_diff_1k.png",
-            -1, 0.010f, 0.025f
+            -1, 0.010f, 1.0f
         }, {
             PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_bump_1k.png",
             PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_diff_1k.png",
-            -1, 0.010f, 1.50f
+            -1, 0.010f, 4.0f
         }
     },
     1024 * 1024,
@@ -204,8 +214,9 @@ void LoadChunkGeneratorProgram()
     GLuint *glp = &g_gl.programs[PROGRAM_CHUNK_GENERATOR];
     char buf[1024];
 
+    djgp_push_file(djp, PATH_TO_NOISE_GLSL_LIBRARY "gpu_noise_lib.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "ChunkGenerator.glsl"));
-    djgp_to_gl(djp, 460, false, true, glp);
+    djgp_to_gl(djp, 450, false, true, glp);
 
     glUseProgram(*glp);
     glUniform1i(glGetUniformLocation(*glp, "u_ChunkDmapSampler"), TEXTURE_DMAP_CHUNK);
@@ -230,6 +241,14 @@ void LoadChunkGeneratorProgram()
     glUniform1i(glGetUniformLocation(*glp, "u_MegaTextureResolution"),
                 g_textureGenerator.targetResolution);
 
+    // frequencies
+    glUniform1f(glGetUniformLocation(*glp, "u_GrassFrequency"),
+                g_textureGenerator.dmap.size /
+                g_textureGenerator.detailsMaps[DETAIL_MAP_GRASS].size);
+    glUniform1f(glGetUniformLocation(*glp, "u_RockFrequency"),
+                g_textureGenerator.dmap.size /
+                g_textureGenerator.detailsMaps[DETAIL_MAP_ROCK].size);
+
     glUseProgram(0);
 
     djgp_release(djp);
@@ -243,7 +262,7 @@ void LoadChunkPreviewProgram()
     char buf[1024];
 
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "ChunkPreview.glsl"));
-    djgp_to_gl(djp, 460, false, true, glp);
+    djgp_to_gl(djp, 450, false, true, glp);
 
     glUseProgram(*glp);
     glUniform1i(glGetUniformLocation(*glp, "u_ChunkDmapSampler"), TEXTURE_DMAP_CHUNK);
@@ -327,27 +346,9 @@ void GenerateChunk(int x, int y, int zoom)
     glDispatchCompute(numGroup, numGroup, 1);
     glUseProgram(0);
 
-    glBindImageTexture(TEXTURE_DMAP_CHUNK,
-                       0,
-                       0,
-                       GL_FALSE,
-                       0,
-                       GL_WRITE_ONLY,
-                       GL_R16);
-    glBindImageTexture(TEXTURE_AMAP_CHUNK,
-                       0,
-                       0,
-                       GL_FALSE,
-                       0,
-                       GL_WRITE_ONLY,
-                       GL_RGBA8);
-    glBindImageTexture(TEXTURE_NMAP_CHUNK,
-                       0,
-                       0,
-                       GL_FALSE,
-                       0,
-                       GL_WRITE_ONLY,
-                       GL_RG8);
+    glBindImageTexture(TEXTURE_DMAP_CHUNK, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R16);
+    glBindImageTexture(TEXTURE_AMAP_CHUNK, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+    glBindImageTexture(TEXTURE_NMAP_CHUNK, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RG8);
     glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }
 
@@ -407,9 +408,12 @@ KeyboardCallback(
 
     if (action == GLFW_PRESS) {
         switch (key) {
-            case GLFW_KEY_ESCAPE:
-                glfwSetWindowShouldClose(window, GL_TRUE);
-            break;
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(window, GL_TRUE);
+        break;
+        case GLFW_KEY_R:
+            LoadPrograms();
+        break;
             default: break;
         }
     }
