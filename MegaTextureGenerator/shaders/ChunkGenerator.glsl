@@ -33,10 +33,64 @@ vec2 texelCoordToTerrainTextureCoord(ivec2 P)
 
 float LookupTerrainDisplacement(vec2 P)
 {
-    float z0 = texture(u_TerrainDmapSampler, P).r;
+#if 0
+    float z0 = textureLod(u_TerrainDmapSampler, P, 0.0).r;
+#else
+
+    vec2 texSize = vec2(textureSize(u_TerrainDmapSampler, 0));
+    vec2 uv = P;
+
+    // We're going to sample a a 4x4 grid of texels surrounding the target UV coordinate. We'll do this by rounding
+    // down the sample location to get the exact center of our "starting" texel. The starting texel will be at
+    // location [1, 1] in the grid, where [0, 0] is the top left corner.
+    vec2 samplePos = P * texSize;
+    vec2 texPos1 = floor(samplePos - 0.5f) + 0.5f;
+
+    // Compute the fractional offset from our starting texel to our original sample location, which we'll
+    // feed into the Catmull-Rom spline function to get our filter weights.
+    vec2 f = samplePos - texPos1;
+
+    // Compute the Catmull-Rom weights using the fractional offset that we calculated earlier.
+    // These equations are pre-expanded based on our knowledge of where the texels will be located,
+    // which lets us avoid having to evaluate a piece-wise function.
+    vec2 w0 = f * (-0.5f + f * (1.0f - 0.5f * f));
+    vec2 w1 = 1.0f + f * f * (-2.5f + 1.5f * f);
+    vec2 w2 = f * (0.5f + f * (2.0f - 1.5f * f));
+    vec2 w3 = f * f * (-0.5f + 0.5f * f);
+
+    // Work out weighting factors and sampling offsets that will let us use bilinear filtering to
+    // simultaneously evaluate the middle 2 samples from the 4x4 grid.
+    vec2 w12 = w1 + w2;
+    vec2 offset12 = w2 / (w1 + w2);
+
+    // Compute the final UV coordinates we'll use for sampling the texture
+    vec2 texPos0 = texPos1 - 1;
+    vec2 texPos3 = texPos1 + 2;
+    vec2 texPos12 = texPos1 + offset12;
+
+    texPos0 /= texSize;
+    texPos3 /= texSize;
+    texPos12 /= texSize;
+
+    float result = 0.0f;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos0.x, texPos0.y), 0.0f).r * w0.x * w0.y;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos12.x, texPos0.y), 0.0f).r * w12.x * w0.y;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos3.x, texPos0.y), 0.0f).r * w3.x * w0.y;
+
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos0.x, texPos12.y), 0.0f).r * w0.x * w12.y;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos12.x, texPos12.y), 0.0f).r * w12.x * w12.y;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos3.x, texPos12.y), 0.0f).r * w3.x * w12.y;
+
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos0.x, texPos3.y), 0.0f).r * w0.x * w3.y;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos12.x, texPos3.y), 0.0f).r * w12.x * w3.y;
+    result+= textureLod(u_TerrainDmapSampler, vec2(texPos3.x, texPos3.y), 0.0f).r * w3.x * w3.y;
+
+    float z0 = result;
+#endif
     float size = u_TerrainDmapZminZmax.y - u_TerrainDmapZminZmax.x;
     return z0 * size + u_TerrainDmapZminZmax.x;
 }
+
 
 TextureData LoadTerrainTextureData(ivec2 P)
 {
@@ -61,9 +115,9 @@ void AddGrass(inout TextureData textureData, ivec2 P)
 {
     float slopeMagSqr = textureData.dzdx * textureData.dzdx
                       + textureData.dzdy * textureData.dzdy;
-    float noise = SimplexPerlin2D(vec2(P) * 0.25);
+    float noise = SimplexPerlin2D(vec2(P) * 0.25) * 0.0f;
 
-    if (slopeMagSqr < 30.0f + noise && textureData.z > 1.5f) {
+    if (slopeMagSqr < 20.0f + noise && textureData.z > 1.5f) {
         const float eps = 1.0f / float(u_TerrainDmapResolution);
         vec2 Q = texelCoordToTerrainTextureCoord(P) * u_GrassFrequency;
         vec3 albedo = vec3(125, 145, 66) / 255.0;
@@ -100,8 +154,8 @@ void AddSand(inout TextureData textureData, ivec2 P)
     if (textureData.z < 1.5f) {
         const float eps = 1.0f / float(u_TerrainDmapResolution);
         vec2 Q = texelCoordToTerrainTextureCoord(P) * u_RockFrequency;
-        vec3 albedo = vec3(160, 160, 104) / 255.0;
-        //vec3 albedo = vec3(0, 0, 104) / 255.0;
+        //vec3 albedo = vec3(160, 160, 104) / 255.0;
+        vec3 albedo = vec3(0, 0, 104) / 255.0;
         //texture(u_RockAmapSampler, Q).rgb;
 
         textureData.albedo+= albedo;
@@ -138,6 +192,20 @@ vec2 ConcentricMapBwd(vec2 d)
     return (vec2(a, b) + vec2(1.0f)) / 2.0f;
 }
 
+vec2 CompressNormal(in TextureData textureData)
+{
+    vec3 N = normalize(vec3(-textureData.dzdx, -textureData.dzdy, 1));
+    return ConcentricMapBwd(N.xy);
+}
+
+float CompressDisplacement(in TextureData textureData)
+{
+    float zmin = u_TerrainDmapZminZmax.x;
+    float zmax = u_TerrainDmapZminZmax.y;
+
+    return (textureData.z - zmin) / (zmax - zmin);
+}
+
 
 #ifdef COMPUTE_SHADER
 layout(local_size_x = 32,
@@ -160,7 +228,7 @@ void main()
     // build data
     TextureData textureData = LoadTerrainTextureData(Q);
     AddGrass(textureData, Q);
-    AddRock(textureData, Q);
+    //AddRock(textureData, Q);
     AddSand(textureData, Q);
 
     // finalize data
@@ -168,8 +236,8 @@ void main()
     vec2 Np = ConcentricMapBwd(N.xy);
 
     imageStore(u_ChunkAmapSampler, P, vec4(textureData.albedo, 0));
-    imageStore(u_ChunkDmapSampler, P, vec4(textureData.z, 0, 0, 0));
-    imageStore(u_ChunkNmapSampler, P, vec4(Np, 0, 0));
+    imageStore(u_ChunkDmapSampler, P, vec4(CompressDisplacement(textureData), 0, 0, 0));
+    imageStore(u_ChunkNmapSampler, P, vec4(CompressNormal(textureData), 0, 0));
 }
 
 #endif

@@ -26,7 +26,7 @@
 #define LEB_IMPLEMENTATION
 #include "LongestEdgeBisection.h"
 
-#define VIEWPORT_WIDTH 800
+#define VIEWPORT_WIDTH 1200
 
 // default path to the directory holding the source files
 #ifndef PATH_TO_SRC_DIRECTORY
@@ -165,6 +165,8 @@ void LoadTerrainDmapTexture()
     glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_TERRAIN);
     djgt_to_gl(djt, GL_TEXTURE_2D, GL_R16, true, true, glt);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     g_textureGenerator.dmap.resolution = djt->next->x;
     djgt_release(djt);
@@ -261,6 +263,7 @@ void LoadChunkPreviewProgram()
     GLuint *glp = &g_gl.programs[PROGRAM_CHUNK_PREVIEW];
     char buf[1024];
 
+    djgp_push_file(djp, PATH_TO_NOISE_GLSL_LIBRARY "gpu_noise_lib.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "ChunkPreview.glsl"));
     djgp_to_gl(djp, 450, false, true, glp);
 
