@@ -19,3 +19,6 @@
 [submodule "submodules/GPU-Noise-Lib"]
 	path = submodules/GPU-Noise-Lib
 	url = https://github.com/BrianSharpe/GPU-Noise-Lib.git
+[submodule "submodules/uthash"]
+	path = submodules/uthash
+	url = https://github.com/troydhanson/uthash.git
