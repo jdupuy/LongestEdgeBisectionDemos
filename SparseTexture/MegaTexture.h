@@ -103,10 +103,12 @@ mt__ProduceChunkTexture(mt_Texture *mt, const struct mt__Chunk *chunk)
         GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
     );
 
+    srand(chunk->key);
+    uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
     for (int i = 0; i < 256 * 256; ++i) {
-        data[4 * i    ] = 255u;
-        data[4 * i + 1] = 255u;
-        data[4 * i + 2] = 255u;
+        data[4 * i    ] = r;
+        data[4 * i + 1] = g;
+        data[4 * i + 2] = b;
         data[4 * i + 3] = 255u;
     }
 
