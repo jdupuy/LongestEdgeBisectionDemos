@@ -252,8 +252,8 @@ vec4 ShadeFragment(vec2 texCoord)
 #if 0
     return texture(u_LebTexture, vec3(P, node.id));
 #else
-    //return texture(sampler2D(u_LebTextureHandles[node.id]), P);
-    return texture(sampler2D(u_LebTextureHandles[node.id]), P * 1.0);
+
+    return texture(sampler2D(u_LebTextureHandles[node.id]), P);
 #endif
 
 #   elif defined(SAMPLER_TRILINEAR)

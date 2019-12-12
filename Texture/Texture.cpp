@@ -31,6 +31,9 @@
 #define LEB_IMPLEMENTATION
 #include "LongestEdgeBisection.h"
 
+#define MT_IMPLEMENTATION
+#include "MegaTexture.h"
+
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -380,6 +383,7 @@ void log_debug_output(void)
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     glDebugMessageCallback(&debug_output_logger, NULL);
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // Program Configuration
