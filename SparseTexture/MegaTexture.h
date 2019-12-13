@@ -103,6 +103,7 @@ mt__ProduceChunkTexture(mt_Texture *mt, const struct mt__Chunk *chunk)
         GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
     );
 
+#if 1
     srand(chunk->key);
     uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
     for (int i = 0; i < 256 * 256; ++i) {
@@ -111,6 +112,8 @@ mt__ProduceChunkTexture(mt_Texture *mt, const struct mt__Chunk *chunk)
         data[4 * i + 2] = b;
         data[4 * i + 3] = 255u;
     }
+#else
+#endif
 
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
     glTextureSubImage2D(mt->textures[chunk->textureID].name,

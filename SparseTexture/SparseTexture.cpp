@@ -149,7 +149,7 @@ struct TerrainManager {
     6,
     7.0f,
     0.1f,
-    10,
+    21,
     8
 };
 
@@ -188,6 +188,7 @@ struct AppManager {
 // OpenGL Manager
 
 enum {
+    CLOCK_IMGUI,
     CLOCK_ALL,
     CLOCK_BATCH,
     CLOCK_UPDATE,
@@ -1869,12 +1870,15 @@ void renderScene()
 // -----------------------------------------------------------------------------
 void renderViewer()
 {
+    double imGuiCpu = 0.0, imGuiGpu = 0.0;
     // render framebuffer
     glUseProgram(g_gl.programs[PROGRAM_VIEWER]);
     glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_EMPTY]);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // draw HUD
+    djgc_ticks(g_gl.clocks[CLOCK_IMGUI], &imGuiCpu, &imGuiGpu);
+    djgc_start(g_gl.clocks[CLOCK_IMGUI]);
     if (g_app.viewer.hud) {
         // ImGui
         glUseProgram(0);
@@ -1883,6 +1887,9 @@ void renderViewer()
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+        //ImGui::ShowDemoWindow();
+
         // Camera Widget
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(250, 180), ImGuiCond_FirstUseEver);
@@ -1994,7 +2001,14 @@ void renderViewer()
             ImGui::Text("GPU: %.3f%s",
                 gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
                 gpuDt < 1. ? "ms" : " s");
-            djgc_ticks(g_gl.clocks[CLOCK_UPDATE], &cpuDt, &gpuDt);
+            djgc_ticks(g_gl.clocks[CLOCK_ALL], &cpuDt, &gpuDt);
+            ImGui::Text("Imgui     -- CPU: %.3f%s",
+                imGuiCpu < 1. ? imGuiCpu * 1e3 : imGuiCpu,
+                imGuiCpu < 1. ? "ms" : " s");
+            ImGui::SameLine();
+            ImGui::Text("GPU: %.3f%s",
+                imGuiGpu < 1. ? imGuiGpu * 1e3 : imGuiGpu,
+                imGuiGpu < 1. ? "ms" : " s");
 
             ImGui::NewLine();
             ImGui::Text("Reduction Details:");
@@ -2099,9 +2113,12 @@ void renderViewer()
 
         //ImGui::ShowDemoWindow();
 
+
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
+    djgc_stop(g_gl.clocks[CLOCK_IMGUI]);
+
 
     // screen recording
     if (g_app.recorder.on) {
