@@ -19,15 +19,30 @@ enum tt_Format {
     TT_FORMAT_PBR   // displacement, normals, albedo
 };
 
+// update arguments
+typedef struct {
+    struct {
+        float modelView[16];
+        float modelViewProjection[16];
+    } matrices;
+
+    float framebufferResolution;
+    float imagePlaneSlope;
+    float pixelToTexelTarget;
+} tt_UpdateArgs;
+
 // data type
 typedef struct tt_Texture tt_Texture;
 
 // ctor / dtor
-TTDEF tt_Texture *tt_Load(const char *filename, int cacheByteSize);
+TTDEF tt_Texture *tt_Load(const char *filename, int cacheCapacity);
 TTDEF void tt_Release(tt_Texture *tt);
 
 // creates a file
 TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize);
+
+// update
+TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs args);
 
 #ifdef __cplusplus
 } // extern "C"
@@ -60,6 +75,7 @@ TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize)
 #endif
 
 #include "uthash.h"
+#include "LongestEdgeBisection.h"
 
 
 /*******************************************************************************
@@ -106,7 +122,7 @@ struct tt_Texture {
             GLuint64    *handles;   // texture handles
             GLuint      *buffers;   // handles (UBO) + LEB Heap (SSBO)
         } gl;
-        int capacity;               // capacity in number of textures
+        int capacity;               // capacity in number of pages
     } cache;
 
     struct {
@@ -118,7 +134,8 @@ struct tt_Texture {
         struct {
             int capacity;           // capacity in bytes
             int offset;             // current offset pos in Bytes
-        } pixelStream;
+        } stream;
+        GLint isReady;
     } updater;
 };
 
@@ -221,49 +238,69 @@ TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize)
     size_t bytesPerPage = tt__BytesPerPage(format, pageSize);
     uint8_t *pageData = (uint8_t *)TT_MALLOC(bytesPerPage);
     int pageCount = tt__PageCount(lebDepth);
-    FILE *pf = fopen(file, "wb");
+    FILE *stream = fopen(file, "wb");
 
-    if (!pf) {
+
+    if (!stream) {
         TT_LOG("tt_Texture: fopen failed");
+
         return false;
     }
 
-    if (fwrite(&header, sizeof(header), 1, pf) != 1) {
+    if (lebDepth >= 28) {
+        TT_LOG("tt_Texture: unsupported resolution");
+        fclose(stream);
+
+        return false;
+    }
+
+    if (fwrite(&header, sizeof(header), 1, stream) != 1) {
         TT_LOG("tt_Texture: header dump failed");
-        fclose(pf);
+        fclose(stream);
+
         return false;
     }
 
     memset(pageData, 0, bytesPerPage);
     for (int i = 0; i < pageCount; ++i) {
-        if (fwrite(pageData, bytesPerPage, 1, pf) != 1) {
+        if (fwrite(pageData, bytesPerPage, 1, stream) != 1) {
             TT_LOG("tt_Texture: page dump failed");
-            fclose(pf);
+            fclose(stream);
+
             return false;
         }
     }
     TT_FREE(pageData);
 
-    fclose(pf);
+    fclose(stream);
 
-    TT_LOG("tt_Texture: wrote %lu Bytes to disk", sizeof(header) + pageCount * bytesPerPage);
+    TT_LOG("tt_Texture: wrote %.1f MiBytes to disk",
+           (float)(sizeof(header) + pageCount * bytesPerPage) / (float)(1024 * 1024));
 
     return true;
 }
 
 
 /*******************************************************************************
- * Load -- Load a TeraTexture
+ * ReadHeader -- Reads a tt_Texture file header from an input stream
  *
  */
 static bool tt__ReadHeader(FILE *stream, tt__Header *header)
 {
-    fread(header, sizeof(*header), 1, stream);
+    if (fread(header, sizeof(*header), 1, stream) != 1) {
+        TT_LOG("tt_Texture: fread failed");
+
+        return false;
+    }
 
     return header->magic == tt__Magic();
 }
 
 
+/*******************************************************************************
+ * LoadStorage -- Loads a tt_Texture storage component
+ *
+ */
 static void
 tt__LoadStorage(tt_Texture *tt, const tt__Header header, FILE *stream)
 {
@@ -274,6 +311,20 @@ tt__LoadStorage(tt_Texture *tt, const tt__Header header, FILE *stream)
 }
 
 
+/*******************************************************************************
+ * ReleaseStorage --Releases the storage component of a tt_Texture
+ *
+ */
+static void tt__ReleaseStorage(tt_Texture *tt)
+{
+    fclose(tt->storage.stream);
+}
+
+
+/*******************************************************************************
+ * TexturesPerPage -- Determines the number of OpenGL texture per page
+ *
+ */
 static int tt__TexturesPerPage(const tt_Texture *tt)
 {
     switch (tt->storage.pages.format) {
@@ -286,6 +337,10 @@ static int tt__TexturesPerPage(const tt_Texture *tt)
 }
 
 
+/*******************************************************************************
+ * LoadCacheTextures -- Allocates GPU texture memory for the cache
+ *
+ */
 static bool tt__LoadCacheTextures(tt_Texture *tt)
 {
     int textureSize = 1 << tt->storage.pages.size;
@@ -294,6 +349,9 @@ static bool tt__LoadCacheTextures(tt_Texture *tt)
     GLuint *textures = (GLuint *)TT_MALLOC(sizeof(GLuint) * textureCount);
     GLuint64 *handles = (GLuint64 *)TT_MALLOC(sizeof(GLuint64) * textureCount);
 
+    TT_LOG("tt_Texture: allocating %lu MiBytes of GPU memory using %i textures\n",
+           (textureCount * tt__BytesPerPage(tt->storage.pages.format, tt->storage.pages.size)) >> 20,
+           textureCount);
     glGenTextures(textureCount, textures);
     for (int j = 0; j < texturesPerPage; ++j) {
         for (int i = 0; i < tt->cache.capacity; ++i) {
@@ -320,6 +378,10 @@ static bool tt__LoadCacheTextures(tt_Texture *tt)
 }
 
 
+/*******************************************************************************
+ * ReleaseCacheTextures -- Cleans up GPU texture memory
+ *
+ */
 static void tt__ReleaseCacheTextures(tt_Texture *tt)
 {
     int textureCount = tt->cache.capacity * tt__TexturesPerPage(tt);
@@ -334,6 +396,10 @@ static void tt__ReleaseCacheTextures(tt_Texture *tt)
 }
 
 
+/*******************************************************************************
+ * Enumeration of the GPU buffers used for cache management
+ *
+ */
 enum {
     TT__CACHE_GL_BUFFER_HANDLES,
     TT__CACHE_GL_BUFFER_LEB,
@@ -341,6 +407,10 @@ enum {
 };
 
 
+/*******************************************************************************
+ * LoadCacheBuffers -- Loads GPU buffer memory for the cache
+ *
+ */
 static bool tt__LoadCacheBuffers(tt_Texture *tt)
 {
     GLuint *buffers = (GLuint *)TT_MALLOC(sizeof(GLuint) * TT__CACHE_GL_BUFFER_COUNT);
@@ -349,23 +419,28 @@ static bool tt__LoadCacheBuffers(tt_Texture *tt)
 
     glBindBuffer(GL_UNIFORM_BUFFER, buffers[TT__CACHE_GL_BUFFER_HANDLES]);
     glBufferStorage(GL_UNIFORM_BUFFER,
-                    sizeof(GLuint64) * tt->cache.capacity,
+                    sizeof(GLuint64) * tt->cache.capacity * tt__TexturesPerPage(tt),
                     NULL,
-                    GL_MAP_WRITE_BIT);
+                    0);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                 buffers[TT__CACHE_GL_BUFFER_HANDLES]);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[TT__CACHE_GL_BUFFER_LEB]);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
                     sizeof(uint32_t) * (1u << (tt->storage.depth - 1)),
                     NULL,
                     0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    tt->cache.gl.buffers = buffers;
+
     return (glGetError() == GL_NO_ERROR);
 }
 
 
+/*******************************************************************************
+ * ReleaseCacheBuffers -- Releases the GPU buffer memory for the cache
+ *
+ */
 static void tt__ReleaseCacheBuffers(tt_Texture *tt)
 {
     glDeleteBuffers(TT__CACHE_GL_BUFFER_COUNT, tt->cache.gl.buffers);
@@ -373,19 +448,14 @@ static void tt__ReleaseCacheBuffers(tt_Texture *tt)
 }
 
 
-static void tt__ReleaseCache(tt_Texture *tt)
+/*******************************************************************************
+ * LoadCache -- Loads the cache component of a tt_Texture
+ *
+ */
+static bool tt__LoadCache(tt_Texture *tt, int cachePageCapacity)
 {
-    tt__ReleaseCacheBuffers(tt);
-    tt__ReleaseCacheTextures(tt);
-}
-
-
-static bool tt__LoadCache(tt_Texture *tt, int cacheByteSize)
-{
-    size_t bytesPerPage = tt__BytesPerPage(tt->storage.pages.format,
-                                           tt->storage.pages.size);
     tt->cache.map = NULL;
-    tt->cache.capacity = cacheByteSize / bytesPerPage;
+    tt->cache.capacity = cachePageCapacity;
 
     if (!tt__LoadCacheTextures(tt)) {
         return false;
@@ -400,13 +470,162 @@ static bool tt__LoadCache(tt_Texture *tt, int cacheByteSize)
     return true;
 }
 
+
+/*******************************************************************************
+ * ReleaseCache -- Releases the cache component of a tt_Texture
+ *
+ */
+static void tt__ReleaseCache(tt_Texture *tt)
+{
+    tt__TextureMapper *map, *tmp;
+
+    HASH_ITER(hh, tt->cache.map, map, tmp) {
+        HASH_DELETE(hh, tt->cache.map, map);
+        free(map);
+    }
+
+    tt__ReleaseCacheBuffers(tt);
+    tt__ReleaseCacheTextures(tt);
+}
+
+enum {
+    TT__UPDATER_GL_BUFFER_STREAM_HANDLES,
+    TT__UPDATER_GL_BUFFER_STREAM_TEXELS,
+    TT__UPDATER_GL_BUFFER_STREAM_LEB,
+    TT__UPDATER_GL_BUFFER_STREAM_PARAMETERS,
+    TT__UPDATER_GL_BUFFER_DISPATCH,
+    TT__UPDATER_GL_BUFFER_LEB,
+
+    TT__UPDATER_GL_BUFFER_COUNT
+};
+
+enum {
+    TT__UPDATER_GL_QUERY_TIMESTAMP,
+
+    TT__UPDATER_GL_QUERY_COUNT
+};
+
+enum {
+    TT__UPDATER_GL_PROGRAM_UPDATE,
+    TT__UPDATER_GL_PROGRAM_DISPATCH,
+    TT__UPDATER_GL_PROGRAM_REDUCTION,
+    TT__UPDATER_GL_PROGRAM_REDUCTION_PREPASS,
+
+    TT__UPDATER_GL_PROGRAM_COUNT
+};
+
+static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
+{
+    bool v = true;
+    int tmp = sizeof(GLuint) * TT__UPDATER_GL_BUFFER_COUNT;
+
+    tt->updater.gl.buffers = (GLuint *)TT_MALLOC(tmp);
+    glGenBuffers(TT__UPDATER_GL_BUFFER_COUNT, tt->updater.gl.buffers);
+
+    return (glGetError() == GL_NO_ERROR);
+}
+
+static bool tt__LoadUpdaterProgramUpdate(tt_Texture *tt)
+{
+    //GLuint program = glCreateShaderProgramv(GL_COMPUTE_SHADER, 1, NULL);
+
+    //tt->updater.gl.programs[TT__UPDATER_GL_PROGRAM_UPDATE] = program;
+
+    return (glGetError() == GL_NO_ERROR);
+}
+
+static bool tt__LoadUpdaterPrograms(tt_Texture *tt)
+{
+    int tmp = sizeof(GLuint) * TT__UPDATER_GL_PROGRAM_COUNT;
+
+    tt->updater.gl.programs = (GLuint *)TT_MALLOC(tmp);
+
+    //       v = tt__LoadUpdaterProgramUpdate(tt);
+    //if (v) v = tt__LoadUpdaterProgramDispatch(tt);
+    //if (v) v = tt__LoadUpdaterProgramReduction(tt);
+    //if (v) v = tt__LoadUpdaterProgramReductionPrepass(tt);
+
+    return true;
+}
+
+static bool tt__LoadUpdaterQueries(tt_Texture *tt)
+{
+    int tmp = sizeof(GLuint) * TT__UPDATER_GL_QUERY_COUNT;
+
+    tt->updater.gl.queries = (GLuint *)TT_MALLOC(tmp);
+
+    glGenQueries(TT__UPDATER_GL_QUERY_COUNT, tt->updater.gl.queries);
+    glQueryCounter(tt->updater.gl.queries[TT__UPDATER_GL_QUERY_TIMESTAMP],
+                   GL_TIMESTAMP);
+
+    return (glGetError() == GL_NO_ERROR);
+}
+
+static void tt__ReleaseUpdaterPrograms(tt_Texture *tt)
+{
+    for (int i = 0; i < TT__UPDATER_GL_PROGRAM_COUNT; ++i)
+        if (glIsProgram(tt->updater.gl.programs[i]))
+            glDeleteProgram(tt->updater.gl.programs[i]);
+
+    TT_FREE(tt->updater.gl.programs);
+}
+
+static void tt__ReleaseUpdaterBuffers(tt_Texture *tt)
+{
+    glDeleteBuffers(TT__UPDATER_GL_BUFFER_COUNT, tt->updater.gl.buffers);
+
+    TT_FREE(tt->updater.gl.buffers);
+}
+
+static void tt__ReleaseUpdaterQueries(tt_Texture *tt)
+{
+    glDeleteQueries(TT__UPDATER_GL_QUERY_COUNT, tt->updater.gl.queries);
+
+    TT_FREE(tt->updater.gl.queries);
+}
+
+static void tt__ReleaseUpdater(tt_Texture *tt)
+{
+    tt__ReleaseUpdaterBuffers(tt);
+    tt__ReleaseUpdaterQueries(tt);
+    tt__ReleaseUpdaterPrograms(tt);
+}
+
 static bool tt__LoadUpdater(tt_Texture *tt)
 {
+    bool v = true;
+
+    if (!tt__LoadUpdaterBuffers(tt)) {
+        return false;
+    }
+
+    if (!tt__LoadUpdaterQueries(tt)) {
+        tt__ReleaseUpdaterBuffers(tt);
+
+        return false;
+    }
+
+    if (!tt__LoadUpdaterPrograms(tt)) {
+        tt__ReleaseUpdaterBuffers(tt);
+        tt__ReleaseUpdaterQueries(tt);
+
+        return false;
+    }
+
     return true;
 }
 
 
-TTDEF tt_Texture *tt_Load(const char *filename, int cacheByteSize)
+/*******************************************************************************
+ * Load -- Loads a tt_Texture from a file
+ *
+ * The cacheCapcity parameter tells how many pages the cache
+ * stores in memory. The number of GPU textures created is
+ * proportional to this parameter, with a factor depending on the page
+ * format.
+ *
+ */
+TTDEF tt_Texture *tt_Load(const char *filename, int cacheCapacity)
 {
     FILE *stream = fopen(filename, "rb+");
     tt__Header header;
@@ -428,7 +647,7 @@ TTDEF tt_Texture *tt_Load(const char *filename, int cacheByteSize)
     tt = (tt_Texture *)TT_MALLOC(sizeof(*tt));
     tt__LoadStorage(tt, header, stream);
 
-    if (!tt__LoadCache(tt, cacheByteSize)) {
+    if (!tt__LoadCache(tt, cacheCapacity)) {
         tt__ReleaseStorage(tt);
         TT_FREE(tt);
 
@@ -437,7 +656,7 @@ TTDEF tt_Texture *tt_Load(const char *filename, int cacheByteSize)
 
     if (!tt__LoadUpdater(tt)) {
         tt__ReleaseCache(tt);
-        tt__ReleaseStream(tt);
+        tt__ReleaseStorage(tt);
         TT_FREE(tt);
 
         return NULL;
@@ -446,22 +665,95 @@ TTDEF tt_Texture *tt_Load(const char *filename, int cacheByteSize)
     return tt;
 }
 
-static void tt__ReleaseUpdater(tt_Texture *tt)
-{
 
-}
-
-static void tt__ReleaseStorage(tt_Texture *tt)
-{
-
-}
-
-
+/*******************************************************************************
+ * Release -- Releases a tt_Texture from from memory
+ *
+ */
 TTDEF void tt_Release(tt_Texture *tt)
 {
     tt__ReleaseUpdater(tt);
     tt__ReleaseCache(tt);
     tt__ReleaseStorage(tt);
     TT_FREE(tt);
+}
+
+
+/*******************************************************************************
+ * Release -- Releases a tt_Texture from from memory
+ *
+ */
+
+static void tt__UpdateLeb(tt_Texture *tt, const tt_UpdateArgs args)
+{
+#if 0
+    tt__RunSplitMergeKernel(tt, args);
+    tt__RunSumReductionKernel(tt);
+    tt__RunIndirectBatchingKernel(tt);
+#endif
+}
+
+static bool tt__CopyLebAsynchronous(tt_Texture *tt)
+{
+    if (tt->updater.isReady == GL_TRUE) {
+        glCopyNamedBufferSubData(
+            tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB],
+            tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_STREAM_LEB],
+            0, 0, 256/*leb_HeapByteSize(tt->storage.depth)*/
+        );
+        glQueryCounter(tt->updater.gl.queries[TT__UPDATER_GL_QUERY_TIMESTAMP],
+                       GL_TIMESTAMP);
+        tt->updater.isReady = GL_FALSE;
+    }
+
+    glGetQueryObjectiv(tt->updater.gl.queries[TT__UPDATER_GL_QUERY_TIMESTAMP],
+                       GL_QUERY_RESULT_AVAILABLE,
+                       &tt->updater.isReady);
+
+    return tt->updater.isReady == GL_TRUE;
+}
+
+
+static void tt__UpdateCache(tt_Texture *tt)
+{
+    leb_Heap *leb; // TODO: init
+    GLuint64 *handles;
+
+    (GLuint64 *)glMapNamedBufferRange(
+        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_STREAM_HANDLES],
+        0, /*leb_HeapByteSize(tt->storage.depth)*/256,
+        GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
+    );
+#if 0
+    // TODO: stop at buffer capacity and take page format into account
+    for (int i = 0; i < leb_NodeCount(leb); ++i) {
+        leb_Node node = leb_DecodeNode(leb, i);
+        const tt__TextureMapper *map = tt__LoadMap(tt, node.id);
+
+        handles[i] = tt->cache.gl.textures[map->textureID].handle;
+    }
+#endif
+
+    glUnmapNamedBuffer(tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_STREAM_HANDLES]);
+
+    glCopyNamedBufferSubData(
+        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_STREAM_LEB],
+        tt->updater.gl.buffers[TT__CACHE_GL_BUFFER_LEB],
+        0, 0, 256/*leb_HeapByteSize(tt->storage.depth)*/
+    );
+    glCopyNamedBufferSubData(
+        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_STREAM_HANDLES],
+        tt->updater.gl.buffers[TT__CACHE_GL_BUFFER_HANDLES],
+        0, 0, 256/*leb_HeapByteSize(tt->storage.depth)*/
+    );
+}
+
+TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs args)
+{
+    tt__UpdateLeb(tt, args);
+
+    if (tt__CopyLebAsynchronous(tt)) {
+        tt__UpdateCache(tt);
+    }
 }
 

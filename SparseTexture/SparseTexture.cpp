@@ -28,14 +28,15 @@
 #define DJ_ALGEBRA_IMPLEMENTATION 1
 #include "dj_algebra.h"
 
+#define TT_IMPLEMENTATION
+#include "TeraTexture.h"
+
 #define LEB_IMPLEMENTATION
 #include "LongestEdgeBisection.h"
 
 #define MT_IMPLEMENTATION
 #include "MegaTexture.h"
 
-#define TT_IMPLEMENTATION
-#include "TeraTexture.h"
 
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
 
@@ -2252,9 +2253,6 @@ void usage(const char *app)
 // -----------------------------------------------------------------------------
 int main(int, char **)
 {
-    // create file
-    tt_Create("test.tt", TT_FORMAT_RGB, 10, 6);
-
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
@@ -2305,6 +2303,13 @@ int main(int, char **)
 
             glfwSwapBuffers(window);
         }
+
+#if 1
+        // create file
+        tt_Create("test.tt", TT_FORMAT_RGB, 12, 8);
+        tt_Texture *tt = tt_Load("test.tt", 512);
+        tt_Release(tt);
+#endif
 
 #if 0
         // bench file loading
