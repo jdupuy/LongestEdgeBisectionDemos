@@ -54,9 +54,6 @@
 #ifndef PATH_TO_ASSET_DIRECTORY
 #   define PATH_TO_ASSET_DIRECTORY "../assets/"
 #endif
-#ifndef PATH_TO_LEB_GLSL_LIBRARY
-#   define PATH_TO_LEB_GLSL_LIBRARY "./"
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // Global Variables
@@ -595,7 +592,8 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
     if (g_terrain.flags.wire)
         djgp_push_string(djp, "#define FLAG_WIRE 1\n");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "FrustumCulling.glsl"));
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisection.glsl");
+    //djgp_push_string(djp, lebgl_LibrarySource());
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
     if (g_terrain.method == METHOD_CS) {
         djgp_push_string(djp, "#define BUFFER_BINDING_LEB_NODE_COUNTER %i\n", BUFFER_LEB_NODE_COUNTER);
@@ -693,8 +691,8 @@ bool loadLebReductionProgram()
     LOG("Loading {Reduction-Program}\n");
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisectionSumReduction.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisectionSumReduction.glsl");
 
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
@@ -715,9 +713,8 @@ bool loadLebReductionPrepassProgram()
     LOG("Loading {Reduction-Prepass-Program}\n");
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_string(djp, "#define LEB_REDUCTION_PREPASS\n");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisectionSumReduction.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisectionSumReductionPrepass.glsl");
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
 
@@ -762,7 +759,7 @@ bool loadBatchProgram()
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_string(djp, "#define BUFFER_BINDING_DRAW_ARRAYS_INDIRECT_COMMAND %i\n", BUFFER_TERRAIN_DRAW);
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainBatcher.glsl"));
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
@@ -796,7 +793,7 @@ bool loadTopViewProgram()
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "FrustumCulling.glsl"));
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_ASSET_DIRECTORY "LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainTopView.glsl"));
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
