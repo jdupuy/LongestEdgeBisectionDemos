@@ -16,17 +16,17 @@ extern "C" {
 enum tt_Format {
     TT_FORMAT_RGB,  // RGB unsigned byte
     TT_FORMAT_HDR,  // RGB 16-bit floating point
-    TT_FORMAT_PBR   // displacement, normals, albedo
+    TT_FORMAT_PBR   // displacement + normals + albedo
 };
 
 // update arguments
 typedef struct {
     struct {
-        float modelView[16];
-        float modelViewProjection[16];
+        float modelView[16];                // col-major modelView matrix
+        float modelViewProjection[16];      // col-major modelViewProjection matrix
     } matrices;
 
-    float framebufferResolution;
+    float framebufferResolution;            //
     float imagePlaneSlope;
     float pixelToTexelTarget;
 } tt_UpdateArgs;
@@ -34,15 +34,15 @@ typedef struct {
 // data type
 typedef struct tt_Texture tt_Texture;
 
+// create a file
+TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize);
+
 // ctor / dtor
 TTDEF tt_Texture *tt_Load(const char *filename, int cacheCapacity);
 TTDEF void tt_Release(tt_Texture *tt);
 
-// creates a file
-TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize);
-
 // update
-TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs args);
+TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args);
 
 #ifdef __cplusplus
 } // extern "C"
@@ -117,6 +117,7 @@ struct tt_Texture {
 
     struct {
         tt__Page *pages;            // LRU map
+        leb_Heap *leb;              // LEB
         struct {
             GLuint      *textures;  // texture names
             GLuint64    *handles;   // texture handles
@@ -402,8 +403,8 @@ static void tt__ReleaseCacheTextures(tt_Texture *tt)
  *
  */
 enum {
-    TT__CACHE_GL_BUFFER_HANDLES,
-    TT__CACHE_GL_BUFFER_LEB,
+    TT__CACHE_GL_BUFFER_LEB,    // LEB heap
+    TT__CACHE_GL_BUFFER_MAP,    // mapping from nodeID to textureID
     TT__CACHE_GL_BUFFER_COUNT,
 };
 
@@ -414,27 +415,35 @@ enum {
  */
 static bool tt__LoadCacheBuffers(tt_Texture *tt)
 {
-    GLuint *buffers = (GLuint *)TT_MALLOC(sizeof(GLuint) * TT__CACHE_GL_BUFFER_COUNT);
+    int bufferCount = TT__CACHE_GL_BUFFER_COUNT;
+    GLuint *buffers = (GLuint *)TT_MALLOC(sizeof(GLuint) * bufferCount);
 
-    glGenBuffers(TT__CACHE_GL_BUFFER_COUNT, buffers);
+    glGenBuffers(bufferCount, buffers);
 
-    glBindBuffer(GL_UNIFORM_BUFFER, buffers[TT__CACHE_GL_BUFFER_HANDLES]);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[TT__CACHE_GL_BUFFER_LEB]);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER,
+                    leb_HeapByteSize(tt->cache.leb),
+                    NULL,
+                    0);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    glBindBuffer(GL_UNIFORM_BUFFER, buffers[TT__CACHE_GL_BUFFER_MAP]);
     glBufferStorage(GL_UNIFORM_BUFFER,
                     sizeof(GLuint64) * tt->cache.capacity * tt__TexturesPerPage(tt),
                     NULL,
                     0);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[TT__CACHE_GL_BUFFER_LEB]);
-    glBufferStorage(GL_SHADER_STORAGE_BUFFER,
-                    sizeof(uint32_t) * (1u << (tt->storage.depth - 1)),
-                    NULL,
-                    0);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    if (glGetError() != GL_NO_ERROR) {
+        glDeleteBuffers(TT__CACHE_GL_BUFFER_COUNT, buffers);
+        TT_FREE(buffers);
+
+        return false;
+    }
 
     tt->cache.gl.buffers = buffers;
 
-    return (glGetError() == GL_NO_ERROR);
+    return true;
 }
 
 
@@ -456,6 +465,7 @@ static void tt__ReleaseCacheBuffers(tt_Texture *tt)
 static bool tt__LoadCache(tt_Texture *tt, int cachePageCapacity)
 {
     tt->cache.pages = NULL;
+    tt->cache.leb = leb_Create(tt->storage.depth);
     tt->cache.capacity = cachePageCapacity;
 
     if (!tt__LoadCacheTextures(tt)) {
@@ -485,6 +495,7 @@ static void tt__ReleaseCache(tt_Texture *tt)
         free(page);
     }
 
+    leb_Release(tt->cache.leb);
     tt__ReleaseCacheBuffers(tt);
     tt__ReleaseCacheTextures(tt);
 }
@@ -493,7 +504,7 @@ enum {
     TT__UPDATER_GL_BUFFER_DISPATCH,
     TT__UPDATER_GL_BUFFER_LEB_CPU,
     TT__UPDATER_GL_BUFFER_LEB_GPU,
-    TT__UPDATER_GL_BUFFER_HANDLES,
+    TT__UPDATER_GL_BUFFER_MAP,
     TT__UPDATER_GL_BUFFER_PARAMETERS,
     TT__UPDATER_GL_BUFFER_PIXEL_UNPACK,
 
@@ -502,14 +513,14 @@ enum {
 
 static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
 {
-    int tmp = sizeof(GLuint) * TT__UPDATER_GL_BUFFER_COUNT;
+    int bufferCount = TT__UPDATER_GL_BUFFER_COUNT;
+    GLuint *buffers = (GLuint *)TT_MALLOC(sizeof(GLuint) * bufferCount);
     const uint32_t dispatchData[8] = {2, 1, 1, 0, 0, 0, 0, 0};
 
-    tt->updater.gl.buffers = (GLuint *)TT_MALLOC(tmp);
-    glGenBuffers(TT__UPDATER_GL_BUFFER_COUNT, tt->updater.gl.buffers);
+    glGenBuffers(bufferCount, buffers);
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER,
-                 tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_DISPATCH]);
+                 buffers[TT__UPDATER_GL_BUFFER_DISPATCH]);
     glBufferStorage(GL_DISPATCH_INDIRECT_BUFFER,
                     sizeof(dispatchData),
                     dispatchData,
@@ -517,31 +528,31 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
 
     glBindBuffer(GL_COPY_READ_BUFFER,
-                 tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_CPU]);
+                 buffers[TT__UPDATER_GL_BUFFER_LEB_CPU]);
     glBufferStorage(GL_COPY_READ_BUFFER,
-                    sizeof(dispatchData),
-                    dispatchData,
+                    leb_HeapByteSize(tt->cache.leb),
+                    NULL,
                     GL_MAP_READ_BIT);
     glBindBuffer(GL_COPY_READ_BUFFER, 0);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                 tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_GPU]);
+                 buffers[TT__UPDATER_GL_BUFFER_LEB_GPU]);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
-                    sizeof(dispatchData),
-                    dispatchData,
-                    GL_MAP_READ_BIT);
+                    leb_HeapByteSize(tt->cache.leb),
+                    NULL,
+                    0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindBuffer(GL_COPY_READ_BUFFER,
-                 tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_HANDLES]);
+                 buffers[TT__UPDATER_GL_BUFFER_MAP]);
     glBufferStorage(GL_COPY_READ_BUFFER,
-                    sizeof(dispatchData),
-                    dispatchData,
-                    GL_MAP_READ_BIT);
+                    sizeof(GLuint64) * tt->cache.capacity * tt__TexturesPerPage(tt),
+                    NULL,
+                    GL_MAP_WRITE_BIT);
     glBindBuffer(GL_COPY_READ_BUFFER, 0);
 
     glBindBuffer(GL_UNIFORM_BUFFER,
-                 tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_PARAMETERS]);
+                 buffers[TT__UPDATER_GL_BUFFER_PARAMETERS]);
     glBufferStorage(GL_UNIFORM_BUFFER,
                     sizeof(dispatchData),
                     dispatchData,
@@ -549,23 +560,23 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     glBindBuffer(GL_COPY_READ_BUFFER,
-                 tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_PIXEL_UNPACK]);
+                 buffers[TT__UPDATER_GL_BUFFER_PIXEL_UNPACK]);
     glBufferStorage(GL_COPY_READ_BUFFER,
                     sizeof(dispatchData),
                     dispatchData,
                     GL_MAP_READ_BIT);
     glBindBuffer(GL_COPY_READ_BUFFER, 0);
 
-#if 0
-    tt__LoadUpdaterBufferDispatch(tt);
-    tt__LoadUpdaterBufferLebCpu(tt);
-    tt__LoadUpdaterBufferLebGpu(tt);
-    tt__LoadUpdaterBufferHandles(tt);
-    tt__LoadUpdaterBufferParameters(tt);
-    tt__LoadUpdaterBufferPixelUnpack(tt);
-#endif
+    if (glGetError() != GL_NO_ERROR) {
+        glDeleteBuffers(TT__UPDATER_GL_BUFFER_COUNT, buffers);
+        TT_FREE(buffers);
 
-    return (glGetError() == GL_NO_ERROR);
+        return false;
+    }
+
+    tt->updater.gl.buffers = buffers;
+
+    return true;
 }
 
 
@@ -871,7 +882,7 @@ static void tt__UpdateCache(tt_Texture *tt)
     }
 #endif
 
-    glUnmapNamedBuffer(tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_HANDLES]);
+    glUnmapNamedBuffer(tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_MAP]);
 
     glCopyNamedBufferSubData(
         tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
@@ -879,8 +890,8 @@ static void tt__UpdateCache(tt_Texture *tt)
         0, 0, 256/*leb_HeapByteSize(tt->storage.depth)*/
     );
     glCopyNamedBufferSubData(
-        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_HANDLES],
-        tt->updater.gl.buffers[TT__CACHE_GL_BUFFER_HANDLES],
+        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_MAP],
+        tt->updater.gl.buffers[TT__CACHE_GL_BUFFER_MAP],
         0, 0, 256/*leb_HeapByteSize(tt->storage.depth)*/
     );
 }
