@@ -73,6 +73,7 @@ struct mt__OpenGLTexture {
 struct mt_Texture {
     struct mt__Chunk            *cache;     // LRU cache
     struct mt__OpenGLTexture    *textures;  // fast memory
+    GLuint texture;
     struct {
         GLuint name;
         int size, offset;
@@ -118,6 +119,12 @@ mt__ProduceChunkTexture(mt_Texture *mt, const struct mt__Chunk *chunk)
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
     glTextureSubImage2D(mt->textures[chunk->textureID].name,
                         0, 0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE,
+                        (char *)NULL + mt->buffer.offset);
+    glTextureSubImage3D(mt->texture,
+                        0,
+                        0, 0, chunk->textureID,
+                        256, 256, 1,
+                        GL_RGBA, GL_UNSIGNED_BYTE,
                         (char *)NULL + mt->buffer.offset);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
@@ -187,7 +194,7 @@ mt_Update(mt_Texture *mt, const leb_Heap *leb, uint64_t *indirectionTable)
         leb_Node node = leb_DecodeNode(leb, i);
         const struct mt__Chunk *chunk = mt__LoadChunk(mt, node.id);
 
-        indirectionTable[i] = mt->textures[chunk->textureID].handle;
+        indirectionTable[i] = chunk->textureID;
     }
 }
 
@@ -209,6 +216,8 @@ static void mt__ReleaseTextures(mt_Texture *mt)
         glMakeTextureHandleNonResidentARB(mt->textures[i].handle);
         glDeleteTextures(1, &mt->textures[i].name);
     }
+
+    glDeleteTextures(1, &mt->texture);
 }
 
 
@@ -239,6 +248,14 @@ static void mt__CreateTextures(mt_Texture *mt)
 
         glBindTexture(GL_TEXTURE_2D, 0);
     }
+
+    glGenTextures(1, &mt->texture);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, mt->texture);
+    glTextureStorage3D(mt->texture, 1, GL_RGBA8, textureSize, textureSize, mt->capacity);
+    glTextureParameteri(mt->texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(mt->texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(mt->texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(mt->texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 }
 
 
