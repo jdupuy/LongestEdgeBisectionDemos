@@ -15,6 +15,8 @@ uniform float u_LodFactor;
 uniform sampler2DArray u_LebTexture;
 uniform sampler2D      u_LebRefTexture;
 
+//uniform sampler2DArray u_LebTextureSparse;
+
 layout(binding = BUFFER_BINDING_LEB_TEXTURE_HANDLES)
 uniform LebTextureHandleBuffer {
     uvec2 u_LebTextureHandles[2048];
@@ -249,13 +251,13 @@ vec4 ShadeFragment(vec2 texCoord)
     leb_Node node = leb_BoundingNode_Quad(lebID, texCoord, P);
     triangleToSquare(P);
 
-#if 0
-    return texture(u_LebTexture, vec3(P, node.id));
-#else
 
     uint bitID = leb_EncodeNode(lebID, node);
     //bitID = bitID > 256u ? 0u : bitID;
 
+#if 1
+    return texture(u_LebTexture, vec3(P, u_LebTextureHandles[bitID]));
+#else
     return texture(sampler2D(u_LebTextureHandles[bitID]), P);
 #endif
 

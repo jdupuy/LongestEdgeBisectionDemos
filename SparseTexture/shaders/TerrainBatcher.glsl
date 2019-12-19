@@ -1,8 +1,6 @@
 // this shader sets the indirect drawing commands
 #ifdef COMPUTE_SHADER
 
-//#pragma optionNV(unroll none)
-
 uniform int u_LebID = 0;
 
 layout(std430, binding = BUFFER_BINDING_DRAW_ARRAYS_INDIRECT_COMMAND)
