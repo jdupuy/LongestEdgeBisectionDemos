@@ -369,19 +369,19 @@ debug_output_logger(
         default: strcpy(typestr, "???"); break;
     }
 
-    if(severity == GL_DEBUG_SEVERITY_HIGH) {
+    if (severity == GL_DEBUG_SEVERITY_HIGH) {
         LOG("djg_error: %s %s\n"                \
                 "-- Begin -- GL_debug_output\n" \
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    } /*else if(severity == GL_DEBUG_SEVERITY_MEDIUM) {
+    } else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
         LOG("djg_warn: %s %s\n"                 \
                 "-- Begin -- GL_debug_output\n" \
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    }*/
+    }
 }
 
 void log_debug_output(void)
@@ -1004,6 +1004,9 @@ bool loadLebTexture()
     leb.buffer = &lebData[2];
     GLuint64 *handleData = (GLuint64 *)glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
     mt_Update(g_terrain.mt, &leb, handleData);
+
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_LEB);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, g_terrain.mt->texture);
 
     // unmap buffers
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
