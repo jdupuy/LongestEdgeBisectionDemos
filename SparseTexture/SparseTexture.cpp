@@ -85,8 +85,7 @@ enum {
 };
 enum {
     PROJECTION_ORTHOGRAPHIC, // no perspective
-    PROJECTION_RECTILINEAR,  // preserves straight lines (OpenGL / DirectX)
-    PROJECTION_FISHEYE       // conformal (stereographic projection)
+    PROJECTION_PERSPECTIVE
 };
 struct CameraManager {
     float fovy, zNear, zFar;  // perspective settings
@@ -97,7 +96,7 @@ struct CameraManager {
     float upAngle, sideAngle; // rotation axis
 } g_camera = {
     80.f, 0.01f, 32.f,
-    PROJECTION_RECTILINEAR,
+    PROJECTION_PERSPECTIVE,
     TONEMAP_RAW,
     INIT_POS,
     dja::mat3(1.0f),
@@ -131,6 +130,7 @@ struct TerrainManager {
     } dmap;
 
     mt_Texture *mt;
+    tt_Texture *tt;
 
     int method;
     int shading;
@@ -143,6 +143,7 @@ struct TerrainManager {
 } g_terrain = {
     {true, true, false, false, true},
     {std::string(PATH_TO_ASSET_DIRECTORY "./Terrain4k.png"), 0.2f},
+    NULL,
     NULL,
     METHOD_CS,
     SHADING_TEXTURE,
@@ -375,13 +376,13 @@ debug_output_logger(
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    } else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
+    } /*else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
         LOG("djg_warn: %s %s\n"                 \
                 "-- Begin -- GL_debug_output\n" \
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    }
+    }*/
 }
 
 void log_debug_output(void)
@@ -412,7 +413,7 @@ void configureViewerProgram()
 // set Terrain program uniforms
 float computeLodFactor()
 {
-    if (g_camera.projection == PROJECTION_RECTILINEAR) {
+    if (g_camera.projection == PROJECTION_PERSPECTIVE) {
         float tmp = 2.0f * tan(radians(g_camera.fovy) / 2.0f)
             / g_framebuffer.h * (1 << g_terrain.gpuSubd)
             * g_terrain.primitivePixelLengthTarget;
@@ -424,8 +425,6 @@ float computeLodFactor()
                          / g_framebuffer.h * (1 << g_terrain.gpuSubd);
 
         return -2.0f * std::log2(targetSize);
-    } else if (g_camera.projection == PROJECTION_FISHEYE) {
-        return 1.0f;
     }
 
     return 1.0f;
@@ -553,11 +552,8 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
     }
     djgp_push_string(djp, "#extension GL_ARB_bindless_texture : require\n");
     switch (g_camera.projection) {
-    case PROJECTION_RECTILINEAR:
-        djgp_push_string(djp, "#define PROJECTION_RECTILINEAR\n");
-        break;
-    case PROJECTION_FISHEYE:
-        djgp_push_string(djp, "#define PROJECTION_FISHEYE\n");
+    case PROJECTION_PERSPECTIVE:
+        djgp_push_string(djp, "#define PROJECTION_PERSPECTIVE\n");
         break;
     case PROJECTION_ORTHOGRAPHIC:
         djgp_push_string(djp, "#define PROJECTION_ORTHOGRAPHIC\n");
@@ -991,6 +987,12 @@ bool loadLebTexture()
                          g_gl.buffers[BUFFER_LEB_TEXTURE_HANDLES]);
 
         g_terrain.mt = mt_Create(textureCount, /*64MiB*/1 << 26);
+
+        tt_Create("test.tt", TT_FORMAT_RGB, 12, 8);
+        g_terrain.tt = tt_Load("test.tt", 256);
+        if (!g_terrain.tt)
+            LOG("tt_Texture FAILED\n");
+
         first = false;
     }
     leb_Heap leb;
@@ -1051,7 +1053,8 @@ bool loadTerrainVariables()
         dja::mat4 modelViewMatrix,
                   modelViewProjectionMatrix;
         dja::vec4 frustumPlanes[6];
-        dja::vec4 align[2];
+        dja::vec2 lodFactor;
+        float align[6];
     } variables;
 
     if (first) {
@@ -1095,15 +1098,39 @@ bool loadTerrainVariables()
         variables.frustumPlanes[i*2+j].y = mvp[1][3] + (j == 0 ? mvp[1][i] : -mvp[1][i]);
         variables.frustumPlanes[i*2+j].z = mvp[2][3] + (j == 0 ? mvp[2][i] : -mvp[2][i]);
         variables.frustumPlanes[i*2+j].w = mvp[3][3] + (j == 0 ? mvp[3][i] : -mvp[3][i]);
-        dja::vec4 tmp = variables.frustumPlanes[i*2+j];
-        variables.frustumPlanes[i*2+j]*= dja::norm(dja::vec3(tmp.x, tmp.y, tmp.z));
+        //dja::vec4 tmp = variables.frustumPlanes[i*2+j];
+        //variables.frustumPlanes[i*2+j]*= dja::norm(dja::vec3(tmp.x, tmp.y, tmp.z));
     }
+
+    variables.lodFactor.x = computeLodFactor();
+    variables.lodFactor.y = float(g_camera.projection);
 
     // upload to GPU
     djgb_to_gl(g_gl.streams[STREAM_TERRAIN_VARIABLES], (const void *)&variables, NULL);
     djgb_glbindrange(g_gl.streams[STREAM_TERRAIN_VARIABLES],
                      GL_UNIFORM_BUFFER,
                      STREAM_TERRAIN_VARIABLES);
+
+    if (g_terrain.tt) {
+        tt_UpdateArgs args;
+
+        memcpy(args.matrices.modelView,
+               &variables.modelViewMatrix[0][0],
+               sizeof(float) * 16);
+        memcpy(args.matrices.modelViewProjection,
+               &variables.modelViewProjectionMatrix[0][0],
+               sizeof(float) * 16);
+        args.framebuffer.width = g_framebuffer.w;
+        args.framebuffer.height = g_framebuffer.h;
+        args.projection = g_camera.projection == PROJECTION_ORTHOGRAPHIC
+                        ? TT_PROJECTION_ORTHOGRAPHIC : TT_PROJECTION_PERSPECTIVE;
+        args.worldSpaceImagePlaneAtUnitDepth.width  = 2.0f * tan(radians(g_camera.fovy) / 2.0f);
+        args.worldSpaceImagePlaneAtUnitDepth.height = 2.0f * tan(radians(g_camera.fovy) / 2.0f);
+        args.pixelsPerTexelTarget = g_terrain.primitivePixelLengthTarget;
+
+        tt_Update(g_terrain.tt, &args);
+    }
+
 
     return (glGetError() == GL_NO_ERROR);
 }
@@ -1517,6 +1544,7 @@ void release()
             glDeleteVertexArrays(1, &g_gl.vertexArrays[i]);
 
     mt_Release(g_terrain.mt);
+    tt_Release(g_terrain.tt);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1901,8 +1929,7 @@ void renderViewer()
         {
             const char* eProjections[] = {
                 "Orthographic",
-                "Rectilinear",
-                "Fisheye"
+                "Perspective"
             };
             const char* eTonemaps[] = {
                 "Uncharted2",
@@ -2303,13 +2330,6 @@ int main(int, char **)
 
             glfwSwapBuffers(window);
         }
-
-#if 1
-        // create file
-        tt_Create("test.tt", TT_FORMAT_RGB, 12, 8);
-        tt_Texture *tt = tt_Load("test.tt", 512);
-        tt_Release(tt);
-#endif
 
 #if 0
         // bench file loading

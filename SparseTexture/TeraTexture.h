@@ -35,8 +35,8 @@ typedef struct {
         int width, height;                  // framebuffer resolution (in pixels)
     } framebuffer;
     struct {
-        float width, height, depth;         // near projection plane in world space units
-    } worldSpaceNearPlane;
+        float width, height;                // projection plane in world space units
+    } worldSpaceImagePlaneAtUnitDepth;
     tt_Projection projection;               // projection type
     float pixelsPerTexelTarget;             // target pixels per texel density
 } tt_UpdateArgs;
@@ -63,6 +63,9 @@ TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args);
 //// end header file ///////////////////////////////////////////////////////////
 #endif // TT_INCLUDE_TT_H
 
+#include <math.h>
+#include "uthash.h"
+#include "LongestEdgeBisection.h"
 
 #ifndef TT_ASSERT
 #    include <assert.h>
@@ -87,11 +90,7 @@ TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args);
 #define TT__BUFFER_SIZE(x)   ((int)(sizeof(x) / sizeof(x[0])))
 #define TT__BUFFER_OFFSET(i) ((char *)NULL + (i))
 
-#define TT__UPDATER_PIXEL_UNPACK_BUFFER_BYTE_SIZE   (1 << 16)
-#define TT__UPDATER_PARAMETERS_BUFFER_BYTE_SIZE     (1 << 10)
-
-#include "uthash.h"
-#include "LongestEdgeBisection.h"
+#define TT__UPDATER_STREAM_BUFFER_BYTE_SIZE   (1 << 26)
 
 
 /*******************************************************************************
@@ -147,11 +146,9 @@ struct tt_Texture {
             GLuint *buffers;        // DISPATCH INDIRECT, LEB RW, LEB STREAM, PIXEL UNPACK, XFORM
             GLuint *queries;        // TIMESTAMP
         } gl;
-        struct {
-            GLint lebParameters, pixelUnpack;
-        } bufferOffset;
-        GLint isReady;
-        GLint splitOrMerge;
+        GLint isReady;              // asynchronous flage
+        GLint splitOrMerge;         // LEB update tracking
+        GLint streamByteOffset;     //
     } updater;
 };
 
@@ -170,6 +167,22 @@ typedef struct {
     int32_t depth;          // LEB depth
     int32_t pageSize;       // page resolution
 } tt__Header;
+
+
+/*******************************************************************************
+ * Update Parameters Data Structure
+ *
+ * This data structure holds the parameters used to update the cache on the GPU.
+ *
+ */
+typedef struct {
+    float modelView[16];        // modelview transformation matrix
+    struct {
+        float x, y, z, w;
+    } frustumPlanes[6];         // frustum planes
+    float lodFactor[2];         // constants for LoD calculation
+    float align[24];            // align to power of two
+} tt__UpdateParameters;
 
 
 /*******************************************************************************
@@ -470,7 +483,7 @@ static void tt__ReleaseCacheBuffers(tt_Texture *tt)
 static bool tt__LoadCache(tt_Texture *tt, int cachePageCapacity)
 {
     tt->cache.pages = NULL;
-    tt->cache.leb = leb_Create(tt->storage.depth);
+    tt->cache.leb = leb_CreateMinMax(1, tt->storage.depth);
     tt->cache.capacity = cachePageCapacity;
 
     if (!tt__LoadCacheTextures(tt)) {
@@ -516,7 +529,7 @@ enum {
     TT__UPDATER_GL_BUFFER_LEB_GPU,
     TT__UPDATER_GL_BUFFER_MAP,
     TT__UPDATER_GL_BUFFER_PARAMETERS,
-    TT__UPDATER_GL_BUFFER_PIXEL_UNPACK,
+    TT__UPDATER_GL_BUFFER_STREAM,
 
     TT__UPDATER_GL_BUFFER_COUNT
 };
@@ -530,7 +543,18 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
 {
     int bufferCount = TT__UPDATER_GL_BUFFER_COUNT;
     GLuint *buffers = (GLuint *)TT_MALLOC(sizeof(GLuint) * bufferCount);
-    const uint32_t dispatchData[8] = {2, 1, 1, 0, 0, 0, 0, 0};
+    const uint32_t dispatchData[8] = {
+        leb_NodeCount(tt->cache.leb) / 256u + 1, 1, 1,
+        0, 0, 0, 0, 0
+    };
+    int lebBufferSize = leb_HeapByteSize(tt->cache.leb) + 2 * sizeof(int32_t);
+    uint32_t *lebBufferData = (uint32_t *)TT_MALLOC(lebBufferSize);
+
+    lebBufferData[0] = leb_MinDepth(tt->cache.leb);
+    lebBufferData[1] = leb_MaxDepth(tt->cache.leb);
+    memcpy(&lebBufferData[2],
+           leb_GetHeapMemory(tt->cache.leb),
+           leb_HeapByteSize(tt->cache.leb));
 
     glGenBuffers(bufferCount, buffers);
 
@@ -553,9 +577,9 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER,
                  buffers[TT__UPDATER_GL_BUFFER_LEB_GPU]);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
-                    leb_HeapByteSize(tt->cache.leb),
-                    NULL,
-                    0);
+                    leb_HeapByteSize(tt->cache.leb) + 2 * sizeof(GLint),
+                    lebBufferData,
+                    GL_DYNAMIC_STORAGE_BIT);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindBuffer(GL_COPY_READ_BUFFER,
@@ -569,27 +593,30 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBindBuffer(GL_UNIFORM_BUFFER,
                  buffers[TT__UPDATER_GL_BUFFER_PARAMETERS]);
     glBufferStorage(GL_UNIFORM_BUFFER,
-                    TT__UPDATER_PARAMETERS_BUFFER_BYTE_SIZE,
+                    sizeof(tt__UpdateParameters),
                     NULL,
-                    GL_MAP_WRITE_BIT);
+                    0);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER,
-                 buffers[TT__UPDATER_GL_BUFFER_PIXEL_UNPACK]);
+                 buffers[TT__UPDATER_GL_BUFFER_STREAM]);
     glBufferStorage(GL_PIXEL_UNPACK_BUFFER,
-                    TT__UPDATER_PIXEL_UNPACK_BUFFER_BYTE_SIZE,
+                    TT__UPDATER_STREAM_BUFFER_BYTE_SIZE,
                     NULL,
                     GL_MAP_WRITE_BIT);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     if (glGetError() != GL_NO_ERROR) {
         glDeleteBuffers(TT__UPDATER_GL_BUFFER_COUNT, buffers);
+        TT_FREE(lebBufferData);
         TT_FREE(buffers);
 
         return false;
     }
 
     tt->updater.gl.buffers = buffers;
+
+    TT_FREE(lebBufferData);
 
     return true;
 }
@@ -809,7 +836,7 @@ static void tt__LoadUpdaterProgramReductionPrepass(GLuint *program)
         "#version 450\n",
         header,
         tt__LongestEdgeBisectionLibraryShaderSource(),
-        tt__LongestEdgeBisectionReductionShaderSource()
+        tt__LongestEdgeBisectionReductionPrepassShaderSource()
     };
 
     sprintf(header,
@@ -877,8 +904,6 @@ static void tt__ReleaseUpdaterPrograms(tt_Texture *tt)
  */
 static bool tt__LoadUpdater(tt_Texture *tt)
 {
-    bool v = true;
-
     if (!tt__LoadUpdaterBuffers(tt)) {
         return false;
     }
@@ -896,8 +921,7 @@ static bool tt__LoadUpdater(tt_Texture *tt)
         return false;
     }
 
-    tt->updater.bufferOffset.lebParameters = 0;
-    tt->updater.bufferOffset.pixelUnpack = 0;
+    tt->updater.streamByteOffset = 0;
     tt->updater.splitOrMerge = 0;
     tt->updater.isReady = GL_TRUE;
 
@@ -979,38 +1003,115 @@ TTDEF void tt_Release(tt_Texture *tt)
     TT_FREE(tt);
 }
 
-
-static void tt__StreamParameters(tt_Texture *tt, const tt_UpdateArgs *args)
+/*******************************************************************************
+ * StreamModelViewMatrix -- Streams the model-view matrix
+ *
+ * This procedure simply copies the matrix.
+ *
+ */
+static void
+tt__StreamModelViewMatrix(tt__UpdateParameters *p, const tt_UpdateArgs *args)
 {
-    struct tt__Parameters {
-        float modelView[16];
-        struct {float x, y, z, w;} frustumPlanes[6];
-        float lodFactor[2];
-        float targetEdgeLength;
-    } *parameters = (struct tt__Parameters *) glMapNamedBuffer;
+    memcpy(p->modelView, args->matrices.modelView, sizeof(p->modelView));
+}
 
-    memcpy(parameters.modelView,
-           args->matrices.modelView,
-           sizeof(parameters.modelView));
 
-#define mvp args->matrices.modelViewProjection
+/*******************************************************************************
+ * StreamFrustumPlanes -- Streams the frustum planes of the camera
+ *
+ * The planes are extracted from the model view projection matrix.
+ * Based on "Fast Extraction of Viewing Frustum Planes from the World-
+ * View-Projection Matrix", by Gil Gribb and Klaus Hartmann.
+ *
+ */
+static void
+tt__StreamFrustumPlanes(
+    tt__UpdateParameters *parameters,
+    const tt_UpdateArgs *args
+) {
+#define MVP args->matrices.modelViewProjection
+#define PLANES parameters->frustumPlanes
     for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 2; ++j) {
-        parameters.frustumPlanes[i*2+j].x = mvp[0 + 4*3] + (j == 0 ? mvp[0 + 4*i] : -mvp[0 + 4*i]);
-        parameters.frustumPlanes[i*2+j].y = mvp[1 + 4*3] + (j == 0 ? mvp[1 + 4*i] : -mvp[1 + 4*i]);
-        parameters.frustumPlanes[i*2+j].z = mvp[2 + 4*3] + (j == 0 ? mvp[2 + 4*i] : -mvp[2 + 4*i]);
-        parameters.frustumPlanes[i*2+j].w = mvp[3 + 4*3] + (j == 0 ? mvp[3 + 4*i] : -mvp[3 + 4*i]);
-        //dja::vec4 tmp = parameters.frustumPlanes[i*2+j];
-        //parameters.frustumPlanes[i*2+j]*= sqrtf();
+        float x = MVP[0 + 4 * 3] + (j == 0 ? MVP[0 + 4 * i] : -MVP[0 + 4 * i]);
+        float y = MVP[1 + 4 * 3] + (j == 0 ? MVP[1 + 4 * i] : -MVP[1 + 4 * i]);
+        float z = MVP[2 + 4 * 3] + (j == 0 ? MVP[2 + 4 * i] : -MVP[2 + 4 * i]);
+        float w = MVP[3 + 4 * 3] + (j == 0 ? MVP[3 + 4 * i] : -MVP[3 + 4 * i]);
+        float nrm = sqrtf(x * x + y * y + z * z);
+
+        PLANES[i * 2 + j].x = x * nrm;
+        PLANES[i * 2 + j].y = y * nrm;
+        PLANES[i * 2 + j].z = z * nrm;
+        PLANES[i * 2 + j].w = w * nrm;
     }
-#undef mvp
-
-    parameters.lodFactor[0] = 1.0f;
-    parameters.lodFactor[1] = args->projection;
-
-    parameters.targetEdgeLength = args->pixelsPerTexelTarget;
+#undef PLANES
+#undef MVP
+}
 
 
+/*******************************************************************************
+ * StreamLodFactor -- Streams the LoD factor
+ *
+ * This procedure computes the lod factor used to split and/or merge the
+ * LEB of the cache. The lod factor computes a target edge size in model view
+ * space.
+ *
+ */
+static void
+tt__StreamLodFactor(
+    tt__UpdateParameters *p,
+    const tt_Texture *tt,
+    const tt_UpdateArgs *args
+) {
+    float framebufferHeight = (float)args->framebuffer.height;
+    float pageResolution    = (float)(1 << tt->storage.pages.size);
+    float virtualResolution = framebufferHeight / pageResolution;
+    float pixelsPerTexelTarget = args->pixelsPerTexelTarget;
+    float nearPlaneHeight = (float)args->worldSpaceImagePlaneAtUnitDepth.height;
+    float targetLength = nearPlaneHeight * (pixelsPerTexelTarget / virtualResolution);
+    float isPerspective = (float)args->projection;
+
+    p->lodFactor[0] = 2.0f * (isPerspective - log2f(targetLength));
+    p->lodFactor[1] = isPerspective;
+}
+
+
+/*******************************************************************************
+ * StreamParameters -- Streams the parameters for updating the cached LEB
+ *
+ */
+static void tt__StreamParameters(tt_Texture *tt, const tt_UpdateArgs *args)
+{
+    const GLuint *buffers = tt->updater.gl.buffers;
+    uint32_t streamByteOffset = tt->updater.streamByteOffset;
+    uint32_t streamByteSize = sizeof(tt__UpdateParameters);
+    tt__UpdateParameters *parameters;
+
+    if (streamByteOffset + streamByteSize > TT__UPDATER_STREAM_BUFFER_BYTE_SIZE) {
+        TT_LOG("tt_Texture: orphaned stream buffer");
+
+        streamByteOffset = 0;
+    }
+
+    parameters = (tt__UpdateParameters *)glMapNamedBufferRange(
+        buffers[TT__UPDATER_GL_BUFFER_STREAM],
+        streamByteOffset, streamByteSize,
+        GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
+    );
+
+    tt__StreamModelViewMatrix(parameters, args);
+    tt__StreamFrustumPlanes(parameters, args);
+    tt__StreamLodFactor(parameters, tt, args);
+
+    glUnmapNamedBuffer(buffers[TT__UPDATER_GL_BUFFER_STREAM]);
+    glCopyNamedBufferSubData(
+        buffers[TT__UPDATER_GL_BUFFER_STREAM],
+        buffers[TT__UPDATER_GL_BUFFER_PARAMETERS],
+        streamByteOffset, 0,
+        sizeof(tt__UpdateParameters)
+    );
+
+    tt->updater.streamByteOffset = streamByteOffset + streamByteSize;
 }
 
 
@@ -1021,17 +1122,25 @@ static void tt__StreamParameters(tt_Texture *tt, const tt_UpdateArgs *args)
  * splits or merges nodes depending on their estimated level of detail.
  *
  */
-static void tt__RunSplitMergeKernel(tt_Texture *tt, const tt_UpdateArgs args)
+static void tt__RunSplitMergeKernel(tt_Texture *tt, const tt_UpdateArgs *args)
 {
     const GLuint *programs = tt->updater.gl.programs;
     const GLuint *buffers = tt->updater.gl.buffers;
     int programID = TT__UPDATER_GL_PROGRAM_MERGE + tt->updater.splitOrMerge;
 
-    glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, buffers[TT__UPDATER_GL_BUFFER_DISPATCH]);
+    tt__StreamParameters(tt, args);
+    glBindBufferBase(GL_UNIFORM_BUFFER,
+                     TT__UPDATER_GL_BUFFER_PARAMETERS,
+                     buffers[TT__UPDATER_GL_BUFFER_PARAMETERS]);
+    glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER,
+                 buffers[TT__UPDATER_GL_BUFFER_DISPATCH]);
     glUseProgram(programs[programID]);
     glDispatchComputeIndirect(0);
     glMemoryBarrier(GL_ALL_BARRIER_BITS);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
+    glBindBufferBase(GL_UNIFORM_BUFFER,
+                     TT__UPDATER_GL_BUFFER_PARAMETERS,
+                     0);
 
     tt->updater.splitOrMerge = 1 - tt->updater.splitOrMerge;
 }
@@ -1107,12 +1216,23 @@ static void tt__RunDispatchingKernel(tt_Texture *tt)
  * the GPU.
  *
  */
-static void tt__UpdateLeb(tt_Texture *tt, const tt_UpdateArgs args)
+static void tt__UpdateLeb(tt_Texture *tt, const tt_UpdateArgs *args)
 {
+    const GLuint *buffers = tt->updater.gl.buffers;
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__UPDATER_GL_BUFFER_LEB_GPU,
+                     buffers[TT__UPDATER_GL_BUFFER_LEB_GPU]);
+
     tt__RunSplitMergeKernel(tt, args);
     tt__RunSumReductionKernel(tt);
     tt__RunDispatchingKernel(tt);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__UPDATER_GL_BUFFER_LEB_GPU,
+                     0);
 }
+
 
 static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
 {
@@ -1122,7 +1242,7 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
         glCopyNamedBufferSubData(
             buffers[TT__UPDATER_GL_BUFFER_LEB_GPU],
             buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
-            0, 0, leb_HeapByteSize(tt->cache.leb)
+            2 * sizeof(int32_t), 0, leb_HeapByteSize(tt->cache.leb)
         );
         glQueryCounter(tt->updater.gl.queries[TT__UPDATER_GL_QUERY_TIMESTAMP],
                        GL_TIMESTAMP);
@@ -1134,9 +1254,10 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
                        &tt->updater.isReady);
 
     if (tt->updater.isReady == GL_TRUE) {
-        const char *bufferData = (const char *)glMapNamedBuffer(
+        const char *bufferData = (const char *)glMapNamedBufferRange(
             buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
-            GL_READ_ONLY
+            0, leb_HeapByteSize(tt->cache.leb),
+            GL_MAP_READ_BIT/* | GL_MAP_UNSYNCHRONIZED_BIT */
         );
 
         leb_SetHeapMemory(tt->cache.leb, bufferData);
@@ -1210,6 +1331,7 @@ static void tt__UpdateCacheMapBuffer(tt_Texture *tt)
         GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
     );
 
+    TT_LOG("Page Count: %i", leb_NodeCount(tt->cache.leb));
     for (int i = 0; i < leb_NodeCount(tt->cache.leb); ++i) {
         leb_Node node = leb_DecodeNode(tt->cache.leb, i);
         const tt__Page *page = tt__LoadPage(tt, node.id);
@@ -1218,20 +1340,19 @@ static void tt__UpdateCacheMapBuffer(tt_Texture *tt)
     }
 
     glUnmapNamedBuffer(buffers[TT__UPDATER_GL_BUFFER_MAP]);
-
     glCopyNamedBufferSubData(
         tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
-        tt->updater.gl.buffers[TT__CACHE_GL_BUFFER_LEB],
+        tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_LEB],
         0, 0, leb_HeapByteSize(tt->cache.leb)
     );
     glCopyNamedBufferSubData(
         tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_MAP],
-        tt->updater.gl.buffers[TT__CACHE_GL_BUFFER_MAP],
+        tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_MAP],
         0, 0, leb_HeapByteSize(tt->cache.leb)
     );
 }
 
-TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs args)
+TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args)
 {
     tt__UpdateLeb(tt, args);
 
