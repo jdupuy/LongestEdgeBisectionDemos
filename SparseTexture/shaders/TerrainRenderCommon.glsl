@@ -8,10 +8,9 @@ uniform PerFrameVariables {
     mat4 u_ModelViewMatrix;
     mat4 u_ModelViewProjectionMatrix;
     vec4 u_FrustumPlanes[6];
+    vec2 u_LodFactor;
 };
 
-uniform float u_TargetEdgeLength;
-uniform float u_LodFactor;
 uniform sampler2DArray u_LebTexture;
 uniform sampler2D      u_LebRefTexture;
 
@@ -48,92 +47,17 @@ vec4[3] DecodeTriangleVertices(in const leb_Node node)
  * where the factor 2 is because the number of segments doubles every 2
  * subdivision level.
  */
-float TriangleLevelOfDetail_Perspective(in const vec4[3] patchVertices)
+float TriangleLevelOfDetail(in const vec4[3] patchVertices)
 {
     vec3 v0 = (u_ModelViewMatrix * patchVertices[0]).xyz;
     vec3 v2 = (u_ModelViewMatrix * patchVertices[2]).xyz;
 
-#if 0 //  human-readable version
-    vec3 edgeCenter = (v0 + v2); // division by 2 was moved to u_LodFactor
-    vec3 edgeVector = (v2 - v0);
-    float distanceToEdgeSqr = dot(edgeCenter, edgeCenter);
-    float edgeLengthSqr = dot(edgeVector, edgeVector);
-
-    return u_LodFactor + log2(edgeLengthSqr / distanceToEdgeSqr);
-#else // optimized version
     float sqrMagSum = dot(v0, v0) + dot(v2, v2);
     float twoDotAC = 2.0f * dot(v0, v2);
     float distanceToEdgeSqr = sqrMagSum + twoDotAC;
     float edgeLengthSqr     = sqrMagSum - twoDotAC;
 
-    return u_LodFactor + log2(edgeLengthSqr / distanceToEdgeSqr);
-#endif
-}
-
-/*
-    In Orthographic Mode, we have
-        EdgePixelLength = EdgeViewSpaceLength / ImagePlaneViewSize * ImagePlanePixelResolution
-    and so using some identities we get:
-        LoD = 2 * (log2(EdgeViewSpaceLength)
-            + log2(ImagePlanePixelResolution / ImagePlaneViewSize)
-            - log2(TargetPixelLength))
-
-            = log2(EdgeViewSpaceLength^2)
-            + 2 * log2(ImagePlanePixelResolution / (ImagePlaneViewSize * TargetPixelLength))
-    so we precompute:
-    u_LodFactor = 2 * log2(ImagePlanePixelResolution / (ImagePlaneViewSize * TargetPixelLength))
-*/
-float TriangleLevelOfDetail_Orthographic(in const vec4[3] patchVertices)
-{
-    vec3 v0 = (u_ModelViewMatrix * patchVertices[0]).xyz;
-    vec3 v2 = (u_ModelViewMatrix * patchVertices[2]).xyz;
-    vec3 edgeVector = (v2 - v0);
-    float edgeLengthSqr = dot(edgeVector, edgeVector);
-
-    return u_LodFactor + log2(edgeLengthSqr);
-}
-
-vec3 Inverse(vec3 x) {return x / dot(x, x);}
-vec3 StereographicProjection(vec3 x) {
-    const vec3 center = vec3(0.0f, 0.0f, 1.0f);
-
-    return 2.0f * Inverse(x + center) - center;
-}
-vec3 ViewSpaceToScreenSpace(vec3 x)
-{
-    // project onto unit sphere
-    float nrmSqr = dot(x, x);
-    float nrm = inversesqrt(nrmSqr);
-    vec3 xNrm = x * nrm;
-
-    // project onto screen
-    vec2 xNdc = StereographicProjection(xNrm).xy;
-    return vec3(xNdc, nrmSqr);
-}
-
-float TriangleLevelOfDetail_Fisheye(in const vec4[3] patchVertices)
-{
-    vec3 v0 = (u_ModelViewMatrix * patchVertices[0]).xyz;
-    vec3 v2 = (u_ModelViewMatrix * patchVertices[2]).xyz;
-    vec3 edgeVector = (v2 - v0);
-    float edgeLengthSqr = dot(edgeVector, edgeVector);
-
-    return u_LodFactor + log2(edgeLengthSqr);
-}
-
-float TriangleLevelOfDetail(in const vec4[3] patchVertices)
-{
-    vec3 v0 = (u_ModelViewMatrix * patchVertices[0]).xyz;
-    vec3 v2 = (u_ModelViewMatrix * patchVertices[2]).xyz;
-#if defined(PROJECTION_RECTILINEAR)
-    return TriangleLevelOfDetail_Perspective(patchVertices);
-#elif defined(PROJECTION_ORTHOGRAPHIC)
-    return TriangleLevelOfDetail_Orthographic(patchVertices);
-#elif defined(PROJECTION_FISHEYE)
-    return TriangleLevelOfDetail_Perspective(patchVertices);
-#else
-    return 0.0;
-#endif
+    return u_LodFactor.x + log2(edgeLengthSqr) - u_LodFactor.y * log2(distanceToEdgeSqr);
 }
 
 
