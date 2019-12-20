@@ -11,4 +11,5 @@ void main()
     uint nodeCount = leb_NodeCount(lebID);
 
     u_DispatchIndirectCommand[0] = nodeCount / 256u + 1u;
+    u_DispatchIndirectCommand[7] = nodeCount;
 }

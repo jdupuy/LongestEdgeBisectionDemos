@@ -1,4 +1,3 @@
-#line 1
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(std140, column_major, binding = BUFFER_BINDING_PARAMETERS)
@@ -6,8 +5,6 @@ uniform Parameters {
     mat4 u_ModelViewMatrix;
     vec4 u_FrustumPlanes[6];
     vec2 u_LodFactor;
-    float u_TargetEdgeLength;
-    //float align[5];
 };
 
 /*******************************************************************************
@@ -142,7 +139,7 @@ void main(void)
 
         // splitting update
 #if FLAG_SPLIT
-        if (targetLod.x > 1.0) {
+        if (targetLod.x > 1.0 || true) {
             leb_SplitNodeConforming_Quad(lebID, node);
         }
 #endif

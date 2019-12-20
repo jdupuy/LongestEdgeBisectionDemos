@@ -5,10 +5,10 @@ by Jonathan Dupuy
 
 #ifndef LEB_BUFFER_COUNT
 #   define LEB_BUFFER_COUNT    1
-#else
-#   ifndef BUFFER_BINDING_LEB
-#       error User must specify the binding of the LEB buffer
-#   endif
+#endif
+
+#ifndef BUFFER_BINDING_LEB
+#   error User must specify the binding of the LEB buffer
 #endif
 layout(std430, binding = BUFFER_BINDING_LEB)
 buffer LebBuffer {
