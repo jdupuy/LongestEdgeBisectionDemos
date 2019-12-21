@@ -58,6 +58,12 @@ TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args);
 TTDEF GLuint tt_LebBuffer(const tt_Texture *tt);
 TTDEF GLuint tt_IndirectionBuffer(const tt_Texture *tt);
 
+// queries
+TTDEF int tt_TexturesPerPage(const tt_Texture *tt);
+
+// texture binding
+TTDEF void tt_BindPageTextures(const tt_Texture *tt, GLenum *textureUnits);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
@@ -358,7 +364,7 @@ static void tt__ReleaseStorage(tt_Texture *tt)
  * TexturesPerPage -- Determines the number of OpenGL texture per page
  *
  */
-static int tt__TexturesPerPage(const tt_Texture *tt)
+TTDEF int tt_TexturesPerPage(const tt_Texture *tt)
 {
     switch (tt->storage.pages.format) {
     case TT_FORMAT_HDR:
@@ -377,10 +383,10 @@ static int tt__TexturesPerPage(const tt_Texture *tt)
 static bool tt__LoadCacheTextures(tt_Texture *tt)
 {
     int textureSize = 1 << tt->storage.pages.size;
-    int texturesPerPage = tt__TexturesPerPage(tt);
+    int texturesPerPage = tt_TexturesPerPage(tt);
     GLuint *textures = (GLuint *)TT_MALLOC(sizeof(GLuint) * texturesPerPage);
 
-    TT_LOG("tt_Texture: allocating %lu MiBytes of GPU memory using %i texture(s)\n",
+    TT_LOG("tt_Texture: allocating %lu MiBytes of GPU memory using %i texture(s)",
            (tt->cache.capacity * texturesPerPage * tt__BytesPerPage(tt->storage.pages.format, tt->storage.pages.size)) >> 20,
            texturesPerPage);
     glGenTextures(texturesPerPage, textures);
@@ -390,7 +396,8 @@ static bool tt__LoadCacheTextures(tt_Texture *tt)
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, *texture);
 
-        glTextureStorage3D(*texture, 1, GL_RGBA8, textureSize, textureSize, tt->cache.capacity);
+        glTextureStorage3D(*texture, 1, GL_RGBA8, textureSize, textureSize,
+                           tt->cache.capacity);
         glTextureParameteri(*texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(*texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTextureParameteri(*texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -415,7 +422,7 @@ static bool tt__LoadCacheTextures(tt_Texture *tt)
  */
 static void tt__ReleaseCacheTextures(tt_Texture *tt)
 {
-    glDeleteTextures(tt__TexturesPerPage(tt), tt->cache.gl.textures);
+    glDeleteTextures(tt_TexturesPerPage(tt), tt->cache.gl.textures);
     TT_FREE(tt->cache.gl.textures);
 }
 
@@ -574,7 +581,7 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBindBuffer(GL_COPY_READ_BUFFER,
                  buffers[TT__UPDATER_GL_BUFFER_LEB_CPU]);
     glBufferStorage(GL_COPY_READ_BUFFER,
-                    leb_HeapByteSize(tt->cache.leb),
+                    leb_HeapByteSize(tt->cache.leb) + 2 * sizeof(GLint),
                     NULL,
                     GL_MAP_READ_BIT);
     glBindBuffer(GL_COPY_READ_BUFFER, 0);
@@ -584,7 +591,7 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
                     leb_HeapByteSize(tt->cache.leb) + 2 * sizeof(GLint),
                     lebBufferData,
-                    GL_DYNAMIC_STORAGE_BIT);
+                    0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindBuffer(GL_COPY_READ_BUFFER,
@@ -1247,7 +1254,7 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
         glCopyNamedBufferSubData(
             buffers[TT__UPDATER_GL_BUFFER_LEB_GPU],
             buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
-            2 * sizeof(int32_t), 0, leb_HeapByteSize(tt->cache.leb)
+            0, 0, 2 * sizeof(int32_t) + leb_HeapByteSize(tt->cache.leb)
         );
         glQueryCounter(tt->updater.gl.queries[TT__UPDATER_GL_QUERY_TIMESTAMP],
                        GL_TIMESTAMP);
@@ -1261,7 +1268,7 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
     if (tt->updater.isReady == GL_TRUE) {
         const char *bufferData = (const char *)glMapNamedBufferRange(
             buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
-            0, leb_HeapByteSize(tt->cache.leb),
+            2 * sizeof(int32_t), leb_HeapByteSize(tt->cache.leb),
             GL_MAP_READ_BIT/* | GL_MAP_UNSYNCHRONIZED_BIT */
         );
 
@@ -1277,10 +1284,9 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
 static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 {
     // TODO: finalize !
-    TT_LOG("Producing page %i using texture %i (%i)",
+    TT_LOG("Producing page %i using texture %i",
            page->key,
-           page->textureID,
-           tt->cache.gl.textures[page->textureID]);
+           page->textureID);
 
     const GLuint *buffers = tt->updater.gl.buffers;
     uint32_t streamByteOffset = tt->updater.streamByteOffset;
@@ -1302,7 +1308,7 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 
     srand(page->key);
     uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
-    for (int i = 0; i < 256 * 256; ++i) {
+    for (int i = 0; i < 1 << (2 * tt->storage.pages.size); ++i) {
         data[4 * i    ] = r;
         data[4 * i + 1] = g;
         data[4 * i + 2] = b;
@@ -1313,7 +1319,9 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
     glTextureSubImage3D(tt->cache.gl.textures[0],
                         0,
                         0, 0, page->textureID,
-                        256, 256, 1,
+                        1 << tt->storage.pages.size,
+                        1 << tt->storage.pages.size,
+                        1,
                         GL_RGBA, GL_UNSIGNED_BYTE,
                         TT__BUFFER_OFFSET(streamByteOffset));
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -1326,8 +1334,6 @@ static tt__Page *tt__LoadPageFromStorage(tt_Texture *tt, uint32_t key)
     tt__Page *page = (tt__Page *)malloc(sizeof(*page));
     int cacheSize = HASH_COUNT(tt->cache.pages);
 
-    TT_LOG("tt_Texture: Cache Size: %i", cacheSize);
-
     page->key = key;
 
     if (cacheSize < tt->cache.capacity) {
@@ -1339,6 +1345,7 @@ static tt__Page *tt__LoadPageFromStorage(tt_Texture *tt, uint32_t key)
             HASH_DELETE(hh, tt->cache.pages, lruPage);
             page->textureID = lruPage->textureID;
             free(lruPage);
+
             break;
         }
     }
@@ -1385,12 +1392,12 @@ static void tt__UpdateCacheMapBuffer(tt_Texture *tt)
     glCopyNamedBufferSubData(
         tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
         tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_LEB],
-        0, 2 * sizeof(int32_t), leb_HeapByteSize(tt->cache.leb)
+        0, 0, 2 * sizeof(int32_t) + leb_HeapByteSize(tt->cache.leb)
     );
     glCopyNamedBufferSubData(
         tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_MAP],
         tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_MAP],
-        0, 0, leb_HeapByteSize(tt->cache.leb)
+        0, 0, sizeof(GLint) * tt->cache.capacity
     );
 }
 
@@ -1411,6 +1418,14 @@ TTDEF GLuint tt_LebBuffer(const tt_Texture *tt)
 TTDEF GLuint tt_IndirectionBuffer(const tt_Texture *tt)
 {
     return tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_MAP];
+}
+
+TTDEF void tt_BindPageTextures(const tt_Texture *tt, GLenum *textureUnits)
+{
+    for (int i = 0; i < tt_TexturesPerPage(tt); ++i) {
+        glActiveTexture(textureUnits[i]);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, tt->cache.gl.textures[i]);
+    }
 }
 
 #undef TT__BUFFER_SIZE
