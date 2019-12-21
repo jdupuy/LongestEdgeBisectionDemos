@@ -1030,7 +1030,7 @@ bool loadTextures()
 
     if (v) v &= loadSceneFramebufferTexture();
     if (v) v &= loadLebRefTexture();
-    //if (v) v &= loadLebTexture();
+    if (v) v &= loadLebTexture();
 
     return v;
 }
@@ -1098,8 +1098,8 @@ bool loadTerrainVariables()
         variables.frustumPlanes[i*2+j].y = mvp[1][3] + (j == 0 ? mvp[1][i] : -mvp[1][i]);
         variables.frustumPlanes[i*2+j].z = mvp[2][3] + (j == 0 ? mvp[2][i] : -mvp[2][i]);
         variables.frustumPlanes[i*2+j].w = mvp[3][3] + (j == 0 ? mvp[3][i] : -mvp[3][i]);
-        //dja::vec4 tmp = variables.frustumPlanes[i*2+j];
-        //variables.frustumPlanes[i*2+j]*= dja::norm(dja::vec3(tmp.x, tmp.y, tmp.z));
+        dja::vec4 tmp = variables.frustumPlanes[i*2+j];
+        variables.frustumPlanes[i*2+j]*= dja::norm(dja::vec3(tmp.x, tmp.y, tmp.z));
     }
 
     variables.lodFactor.x = computeLodFactor();
@@ -1594,6 +1594,7 @@ void lebReductionPass()
     djgc_start(g_gl.clocks[CLOCK_REDUCTION]);
     int it = g_terrain.maxDepth;
 
+#if 0
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, g_gl.buffers[BUFFER_LEB]);
     glUseProgram(g_gl.programs[PROGRAM_LEB_REDUCTION_PREPASS]);
     if (true) {
@@ -1623,7 +1624,45 @@ void lebReductionPass()
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         djgc_stop(g_gl.clocks[CLOCK_REDUCTION00 + it]);
     }
+#else
+    tt_Texture *tt = g_terrain.tt;
+    const GLuint *programs = tt->updater.gl.programs;
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__UPDATER_GL_BUFFER_LEB_GPU,
+                     g_gl.buffers[BUFFER_LEB]);
+
+    glUseProgram(programs[TT__UPDATER_GL_PROGRAM_REDUCTION_PREPASS]);
+    if (true) {
+        int cnt = (1 << it) >> 5;
+        int numGroup = (cnt >= 256) ? (cnt >> 8) : 1;
+        int loc = glGetUniformLocation(programs[TT__UPDATER_GL_PROGRAM_REDUCTION_PREPASS],
+                                       "u_PassID");
+
+        glUniform1i(loc, it);
+        glDispatchCompute(numGroup, 1, 1);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        it-= 5;
+    }
+
+    glUseProgram(programs[TT__UPDATER_GL_PROGRAM_REDUCTION]);
+    while (--it >= 0) {
+        int loc = glGetUniformLocation(programs[TT__UPDATER_GL_PROGRAM_REDUCTION], "u_PassID");
+        int cnt = 1 << it;
+        int numGroup = (cnt >= 256) ? (cnt >> 8) : 1;
+
+        glUniform1i(loc, it);
+        glDispatchCompute(numGroup, 1, 1);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    }
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__UPDATER_GL_BUFFER_LEB_GPU,
+                     0);
+#endif
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB, 0);
+
     djgc_stop(g_gl.clocks[CLOCK_REDUCTION]);
 }
 
