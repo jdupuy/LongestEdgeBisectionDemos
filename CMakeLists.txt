@@ -23,6 +23,7 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 # set path to dependencies
 add_subdirectory(submodules/glfw)
+include_directories(TeraTextureLibrary)
 include_directories(submodules/glfw/include)
 include_directories(submodules/imgui)
 include_directories(submodules/stb)
@@ -135,4 +136,18 @@ target_compile_definitions(
 unset(SRC_FILES)
 unset(DEMO)
 
+# ------------------------------------------------------------------------------
+set(DEMO TeraTextureViewer)
+set(SRC_DIR TeraTextureViewer)
+include_directories(${SRC_DIR})
+aux_source_directory(${SRC_DIR} SRC_FILES)
+add_executable(${DEMO} ${IMGUI_SRC_FILES} ${SRC_FILES} ${SRC_DIR}/glad/glad.c)
+target_link_libraries(${DEMO} glfw)
+target_compile_definitions(
+    ${DEMO} PUBLIC
+    -DPATH_TO_SRC_DIRECTORY="${CMAKE_SOURCE_DIR}/${SRC_DIR}/"
+    -DPATH_TO_ASSET_DIRECTORY="${CMAKE_SOURCE_DIR}/assets/"
+)
+unset(SRC_FILES)
+unset(DEMO)
 
