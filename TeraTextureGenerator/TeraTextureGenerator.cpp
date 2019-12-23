@@ -117,7 +117,7 @@ void LoadTexture(const char *pathToFile)
 
 void Load(int argc, char **argv, GLFWwindow *window)
 {
-    int textureRes = 12;
+    int textureRes = 14;
     int pageRes = 8;
     int texelsPerPage = 1 << (2 * pageRes);
     int dataByteSize  = 4 * texelsPerPage;
@@ -148,7 +148,7 @@ void Load(int argc, char **argv, GLFWwindow *window)
     glGenerateMipmap(GL_TEXTURE_2D);
 
     glActiveTexture(GL_TEXTURE2);
-    //LoadTexture(PATH_TO_ASSET_DIRECTORY "./gtav-map-satellite-huge.png");
+    LoadTexture(PATH_TO_ASSET_DIRECTORY "./gtav-map-satellite-huge.png");
     glActiveTexture(GL_TEXTURE0);
 
     GLuint program = LoadGenerationProgram();
@@ -190,12 +190,13 @@ void Load(int argc, char **argv, GLFWwindow *window)
         glBindImageTexture(0, pageTextureData, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
         glViewport(0, 0, 1 << pageRes, 1 << pageRes);
         glUseProgram(program);
+        glUniform1ui(glGetUniformLocation(program, "u_NodeID"), i);
         glBindVertexArray(vertexArray);
-        glDrawArrays(GL_TRIANGLE_STRIP, i * 4, (i + 1) * 4);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(0);
         glUseProgram(0);
         glMemoryBarrier(GL_ALL_BARRIER_BITS);
-        glfwSwapBuffers(window);
+        //glfwSwapBuffers(window);
 
         // transfer data to compressed texture
         glGetTextureImage(pageTextureData, 0, GL_RGBA, GL_UNSIGNED_BYTE, dataByteSize, (void *)data);

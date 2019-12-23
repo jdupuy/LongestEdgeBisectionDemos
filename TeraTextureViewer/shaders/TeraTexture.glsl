@@ -12,7 +12,7 @@ uniform tt_IndirectionMap {
 
 vec4 tt_texture(int textureID, vec2 P);
 
-void triangleToSquare(inout vec2 P)
+void tt__TriangleToSquare(inout vec2 P)
 {
     if (P.x < P.y) {
         P.y+= P.x;
@@ -33,7 +33,7 @@ vec4 tt_texture(int textureID, vec2 P)
     uint bitID      = leb_EncodeNode(lebID, node);
     int layer       = tt_Indirections[bitID];
 
-    triangleToSquare(Q);
+    tt__TriangleToSquare(Q);
 
     return texture(tt_Textures[textureID], vec3(Q, layer));
 }
