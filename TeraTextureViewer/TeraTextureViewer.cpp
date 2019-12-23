@@ -40,6 +40,59 @@ char *strcat2(char *dst, const char *src1, const char *src2)
     return strcat(dst, src2);
 }
 
+static void APIENTRY
+DebugOutputLogger(
+    GLenum source,
+    GLenum type,
+    GLuint,
+    GLenum severity,
+    GLsizei,
+    const GLchar* message,
+    const GLvoid*
+) {
+    char srcstr[32], typestr[32];
+
+    switch(source) {
+        case GL_DEBUG_SOURCE_API: strcpy(srcstr, "OpenGL"); break;
+        case GL_DEBUG_SOURCE_WINDOW_SYSTEM: strcpy(srcstr, "Windows"); break;
+        case GL_DEBUG_SOURCE_SHADER_COMPILER: strcpy(srcstr, "Shader Compiler"); break;
+        case GL_DEBUG_SOURCE_THIRD_PARTY: strcpy(srcstr, "Third Party"); break;
+        case GL_DEBUG_SOURCE_APPLICATION: strcpy(srcstr, "Application"); break;
+        case GL_DEBUG_SOURCE_OTHER: strcpy(srcstr, "Other"); break;
+        default: strcpy(srcstr, "???"); break;
+    };
+
+    switch(type) {
+        case GL_DEBUG_TYPE_ERROR: strcpy(typestr, "Error"); break;
+        case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: strcpy(typestr, "Deprecated Behavior"); break;
+        case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR: strcpy(typestr, "Undefined Behavior"); break;
+        case GL_DEBUG_TYPE_PORTABILITY: strcpy(typestr, "Portability"); break;
+        case GL_DEBUG_TYPE_PERFORMANCE: strcpy(typestr, "Performance"); break;
+        case GL_DEBUG_TYPE_OTHER: strcpy(typestr, "Message"); break;
+        default: strcpy(typestr, "???"); break;
+    }
+
+    if (severity == GL_DEBUG_SEVERITY_HIGH) {
+        LOG("djg_error: %s %s\n"                \
+                "-- Begin -- GL_debug_output\n" \
+                "%s\n"                              \
+                "-- End -- GL_debug_output\n",
+                srcstr, typestr, message);
+    } else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
+        LOG("djg_warn: %s %s\n"                 \
+                "-- Begin -- GL_debug_output\n" \
+                "%s\n"                              \
+                "-- End -- GL_debug_output\n",
+                srcstr, typestr, message);
+    }
+}
+
+void SetupDebugOutput(void)
+{
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(&DebugOutputLogger, NULL);
+}
+
 // -----------------------------------------------------------------------------
 struct AppManager {
     struct {
@@ -143,8 +196,7 @@ void Load(int argc, char **argv)
         GL_TEXTURE3
     };
 
-    tt_Create("test.tt", TT_FORMAT_RGB, 14, 8);
-    g_viewer.texture.tt = tt_Load("test.tt", 2048);
+    g_viewer.texture.tt = tt_Load("testRGB.tt", 2048);
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
     tt_BindPageTextures(g_viewer.texture.tt, textureUnits);
@@ -224,13 +276,13 @@ void RenderGui()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ImGui::SetNextWindowPos(ImVec2(0, 0)/*, ImGuiSetCond_FirstUseEver*/);
-    ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH)/*, ImGuiSetCond_FirstUseEver*/);
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH));
     ImGui::Begin("Window");
     {
         ImGui::Text("Pos : %f %f", g_viewer.camera.pos.x, g_viewer.camera.pos.y);
         ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
-        ImGui::SliderFloat("PixelPerTexel", &g_viewer.texture.args.pixelsPerTexelTarget, 0, 2);
+        ImGui::SliderFloat("PixelPerTexel", &g_viewer.texture.args.pixelsPerTexelTarget, 0, 4);
         ImGui::Checkbox("Freeze", &g_viewer.flags.freezeTexture);
     }
     ImGui::End();
@@ -337,6 +389,8 @@ int main(int argc, char **argv)
         LOG("gladLoadGLLoader failed\n");
         return -1;
     }
+
+    SetupDebugOutput();
 
     LOG("-- Begin -- Demo\n");
     try {
