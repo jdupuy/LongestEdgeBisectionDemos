@@ -4,11 +4,12 @@ by Jonathan Dupuy
 */
 
 #ifndef LEB_BUFFER_COUNT
+#   define BUFFER_BINDING_LEB  0
 #   define LEB_BUFFER_COUNT    1
-#endif
-
-#ifndef BUFFER_BINDING_LEB
-#   error User must specify the binding of the LEB buffer
+#else
+#   ifndef BUFFER_BINDING_LEB
+#       error User must specify the binding of the LEB buffer
+#   endif
 #endif
 layout(std430, binding = BUFFER_BINDING_LEB)
 buffer LebBuffer {
@@ -1029,10 +1030,6 @@ leb_Node leb_BoundingNode_Quad(const int lebID, vec2 p, out vec2 u)
                 p.x = (q.x - q.y);
                 p.y = (1.0f - q.x - q.y);
             }
-
-            // FIXME
-            if (node.depth >= 29)
-                return leb_Node(0u, 0);
         }
 
         u = p;

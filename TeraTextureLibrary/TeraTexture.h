@@ -238,7 +238,7 @@ static int32_t tt__PageCount(int32_t lebDepth)
 
 
 /*******************************************************************************
- * PageCount -- Computes the number of pages stored in the tt_Texture file
+ * BytesPerPage -- Computes the number of pages stored in the tt_Texture file
  *
  */
 static size_t tt__BytesPerPage(tt_Format format, int32_t pageSize)
@@ -247,13 +247,13 @@ static size_t tt__BytesPerPage(tt_Format format, int32_t pageSize)
 
     switch (format) {
     case TT_FORMAT_RGB:
-        return texelCount >> 1; // BC1: 1/2 Byte per texel
+        return texelCount >> 1;// BC1: 1/2 Byte per texel
     case TT_FORMAT_HDR:
-        return texelCount;      // BC6: 1 Byte per texel
+        return texelCount;     // BC6: 1 Byte per texel
     case TT_FORMAT_PBR:
         return  /* BC1 */ (texelCount >> 1) +
-                /* BC6 */ (texelCount) +
-                /* raw u16 (x2) */ (texelCount << 2);
+                /* RG16 */ (texelCount << 2) +
+                /* BC5 */ (texelCount);
     }
 }
 
@@ -377,6 +377,29 @@ TTDEF int tt_TexturesPerPage(const tt_Texture *tt)
 
 
 /*******************************************************************************
+ * PageTextureInternalFormat -- Provides the internal format of a page texture
+ *
+ */
+static GLint tt__PageTextureInternalFormat(const tt_Texture *tt, int textureID)
+{
+    switch (tt->storage.pages.format) {
+    case TT_FORMAT_RGB:
+        return GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
+    case TT_FORMAT_HDR:
+        return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
+    case TT_FORMAT_PBR: {
+        GLint formats[] = {
+            /* albedo */GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
+            /* displacement */GL_RG16,
+            /* normal map */GL_COMPRESSED_RED_GREEN_RGTC2_EXT
+        };
+
+        return formats[textureID];
+    }
+    }
+}
+
+/*******************************************************************************
  * LoadCacheTextures -- Allocates GPU texture memory for the cache
  *
  */
@@ -393,11 +416,12 @@ static bool tt__LoadCacheTextures(tt_Texture *tt)
 
     for (int i = 0; i < texturesPerPage; ++i) {
         GLuint *texture = &textures[i];
+        GLint internalFormat = tt__PageTextureInternalFormat(tt, i);
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, *texture);
 
-        glTextureStorage3D(*texture, 1, GL_RGBA8, textureSize, textureSize,
-                           tt->cache.capacity);
+        glTextureStorage3D(*texture, 1, internalFormat,
+                           textureSize, textureSize, tt->cache.capacity);
         glTextureParameteri(*texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(*texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTextureParameteri(*texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1284,13 +1308,14 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
 static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 {
     // TODO: finalize !
-    TT_LOG("Producing page %i using texture %i",
+    TT_LOG("tt_Texture: Producing page %i using texture %i",
            page->key,
            page->textureID);
 
     const GLuint *buffers = tt->updater.gl.buffers;
     uint32_t streamByteOffset = tt->updater.streamByteOffset;
-    uint32_t streamByteSize = 4 << (2 * tt->storage.pages.size);
+    uint32_t streamByteSize = tt__BytesPerPage(tt->storage.pages.format,
+                                               tt->storage.pages.size);
     uint8_t *data;
 
     if (streamByteOffset + streamByteSize > TT__UPDATER_STREAM_BUFFER_BYTE_SIZE) {
@@ -1306,6 +1331,7 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
         GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
     );
 
+#if 0 // debug: load pseudo random texture
     srand(page->key);
     uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
     for (int i = 0; i < 1 << (2 * tt->storage.pages.size); ++i) {
@@ -1314,8 +1340,15 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
         data[4 * i + 2] = b;
         data[4 * i + 3] = 255u;
     }
+#else
+    fseek(tt->storage.stream,
+          sizeof(tt__Header) + page->key * streamByteSize,
+          SEEK_SET);
+    fread(data, streamByteSize, 1, tt->storage.stream);
+#endif
 
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+#if 0
     glTextureSubImage3D(tt->cache.gl.textures[0],
                         0,
                         0, 0, page->textureID,
@@ -1324,6 +1357,19 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
                         1,
                         GL_RGBA, GL_UNSIGNED_BYTE,
                         TT__BUFFER_OFFSET(streamByteOffset));
+#else
+    /*for (int i = 0; i < tt_TexturesPerPage(tt); ++i)*/ {
+        glCompressedTextureSubImage3D(tt->cache.gl.textures[0],
+                                      0,
+                                      0, 0, page->textureID,
+                                      1 << tt->storage.pages.size,
+                                      1 << tt->storage.pages.size,
+                                      1,
+                                      tt__PageTextureInternalFormat(tt, 0),
+                                      streamByteSize,
+                                      TT__BUFFER_OFFSET(streamByteOffset));
+    }
+#endif
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     tt->updater.streamByteOffset = streamByteOffset + streamByteSize;

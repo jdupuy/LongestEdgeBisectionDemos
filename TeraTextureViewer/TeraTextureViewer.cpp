@@ -284,6 +284,7 @@ void RenderGui()
         ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
         ImGui::SliderFloat("PixelPerTexel", &g_viewer.texture.args.pixelsPerTexelTarget, 0, 4);
         ImGui::Checkbox("Freeze", &g_viewer.flags.freezeTexture);
+        ImGui::Text("NodeCount: %i", leb_NodeCount(g_viewer.texture.tt->cache.leb));
     }
     ImGui::End();
 

@@ -17,6 +17,9 @@
 #define LEB_IMPLEMENTATION
 #include "LongestEdgeBisection.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #define DJ_OPENGL_IMPLEMENTATION 1
 #include "dj_opengl.h"
 
@@ -84,7 +87,35 @@ void SetupDebugOutput(void)
     glDebugMessageCallback(&DebugOutputLogger, NULL);
 }
 
-void Load(int argc, char **argv)
+GLuint LoadGenerationProgram()
+{
+    djg_program *djgp = djgp_create();
+    GLuint program;
+
+    //djgp_push_string(djgp, "#define BUFFER_BINDING_LEB 8\n");
+    djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
+    djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/TextureGeneration.glsl");
+    djgp_to_gl(djgp, 450, false, true, &program);
+    djgp_release(djgp);
+
+    return program;
+}
+
+
+void LoadTexture(const char *pathToFile)
+{
+    djg_texture *djgt = djgt_create(0);
+    GLuint texture;
+
+    djgt_push_image_u8(djgt, pathToFile, true);
+    djgt_to_gl(djgt, GL_TEXTURE_2D, GL_RGBA8, 1, 1, &texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    djgt_release(djgt);
+}
+
+void Load(int argc, char **argv, GLFWwindow *window)
 {
     int textureRes = 12;
     int pageRes = 8;
@@ -93,9 +124,10 @@ void Load(int argc, char **argv)
     tt_Texture *tt;
     uint8_t *data = (uint8_t *)TT_MALLOC(dataByteSize);
 
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    glActiveTexture(GL_TEXTURE0);
+    GLuint pageTexture;
+    glGenTextures(1, &pageTexture);
+    glBindTexture(GL_TEXTURE_2D, pageTexture);
     glTexImage2D(GL_TEXTURE_2D,
                  0,
                  GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
@@ -103,7 +135,33 @@ void Load(int argc, char **argv)
                  0,
                  GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
-    // create the texture
+    glActiveTexture(GL_TEXTURE1);
+    GLuint pageTextureData;
+    glGenTextures(1, &pageTextureData);
+    glBindTexture(GL_TEXTURE_2D, pageTextureData);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA8,
+                 1 << pageRes, 1 << pageRes,
+                 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glActiveTexture(GL_TEXTURE2);
+    //LoadTexture(PATH_TO_ASSET_DIRECTORY "./gtav-map-satellite-huge.png");
+    glActiveTexture(GL_TEXTURE0);
+
+    GLuint program = LoadGenerationProgram();
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program, "u_InputSampler"), 2);
+    glUseProgram(0);
+
+    GLuint vertexArray;
+    glGenVertexArrays(1, &vertexArray);
+    glBindVertexArray(vertexArray);
+    glBindVertexArray(0);
+
+    // create the tt_Texture file
     tt_Create("testRGB.tt", TT_FORMAT_RGB, textureRes, pageRes);
     tt = tt_Load("testRGB.tt", 256);
 
@@ -115,8 +173,7 @@ void Load(int argc, char **argv)
 
     // create pages and write to disk
     for (int i = 0; i < (2 << tt->storage.depth); ++i) {
-        TT_LOG("Producing page %i / %i", i + 1, (2 << tt->storage.depth));
-
+#if 0
         srand(i);
         uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
         for (int i = 0; i < 1 << (2 * tt->storage.pages.size); ++i) {
@@ -127,8 +184,24 @@ void Load(int argc, char **argv)
         }
 
         // updload image
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1 << pageRes, 1 << pageRes,
-                        GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glTextureSubImage2D(pageTexture, 0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            GL_RGBA, GL_UNSIGNED_BYTE, data);
+#else
+        glBindImageTexture(0, pageTextureData, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+        glViewport(0, 0, 1 << pageRes, 1 << pageRes);
+        glUseProgram(program);
+        glBindVertexArray(vertexArray);
+        glDrawArrays(GL_TRIANGLE_STRIP, i * 4, (i + 1) * 4);
+        glBindVertexArray(0);
+        glUseProgram(0);
+        glMemoryBarrier(GL_ALL_BARRIER_BITS);
+        glfwSwapBuffers(window);
+
+        // transfer data to compressed texture
+        glGetTextureImage(pageTextureData, 0, GL_RGBA, GL_UNSIGNED_BYTE, dataByteSize, (void *)data);
+        glTextureSubImage2D(pageTexture, 0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            GL_RGBA, GL_UNSIGNED_BYTE, data);
+#endif
         // retrieve data
         glGetCompressedTexImage(GL_TEXTURE_2D, 0, data);
 
@@ -136,7 +209,7 @@ void Load(int argc, char **argv)
         fwrite(data, pageByteSize, 1, tt->storage.stream);
     }
 
-    glDeleteTextures(1, &texture);
+    glDeleteTextures(1, &pageTexture);
 
     tt_Release(tt);
     TT_FREE(data);
@@ -179,7 +252,7 @@ int main(int argc, char **argv)
 
     LOG("-- Begin -- Demo\n");
     try {
-        Load(argc, argv);
+        Load(argc, argv, window);
         glfwTerminate();
     } catch (std::exception& e) {
         LOG("%s", e.what());
