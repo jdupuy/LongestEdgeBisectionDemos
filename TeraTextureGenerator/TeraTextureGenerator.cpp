@@ -26,7 +26,7 @@
 #define DJ_ALGEBRA_IMPLEMENTATION 1
 #include "dj_algebra.h"
 
-#define VIEWPORT_WIDTH 800
+#define VIEWPORT_WIDTH 1024
 
 #ifndef PATH_TO_SRC_DIRECTORY
 #   define PATH_TO_SRC_DIRECTORY "./"
@@ -117,8 +117,8 @@ void LoadTexture(const char *pathToFile)
 
 void Load(int argc, char **argv, GLFWwindow *window)
 {
-    int textureRes = 14;
-    int pageRes = 8;
+    int textureRes = 12;
+    int pageRes = 9;
     int texelsPerPage = 1 << (2 * pageRes);
     int dataByteSize  = 4 * texelsPerPage;
     tt_Texture *tt;
@@ -173,6 +173,7 @@ void Load(int argc, char **argv, GLFWwindow *window)
 
     // create pages and write to disk
     for (int i = 0; i < (2 << tt->storage.depth); ++i) {
+        TT_LOG("Generating page %i / %i", i, (2 << tt->storage.depth));
 #if 0
         srand(i);
         uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
