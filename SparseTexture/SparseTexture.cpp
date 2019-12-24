@@ -958,7 +958,7 @@ void configureLebTextureSampler(GLenum target = GL_TEXTURE_2D_ARRAY)
             glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         break;
         case SAMPLER_TRILINEAR:
-            glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY, 16.f);
+            //glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY, 16.f);
             glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
