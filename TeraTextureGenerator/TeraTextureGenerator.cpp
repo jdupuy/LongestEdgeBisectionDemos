@@ -145,7 +145,9 @@ void Load(int argc, char **argv, GLFWwindow *window)
                  1 << pageRes, 1 << pageRes,
                  0,
                  GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glActiveTexture(GL_TEXTURE2);
     LoadTexture(PATH_TO_ASSET_DIRECTORY "./gtav-map-satellite-huge.png");
@@ -173,7 +175,7 @@ void Load(int argc, char **argv, GLFWwindow *window)
 
     // create pages and write to disk
     for (int i = 0; i < (2 << tt->storage.depth); ++i) {
-        TT_LOG("Generating page %i / %i", i, (2 << tt->storage.depth));
+        TT_LOG("Generating page %i / %i", i + 1, (2 << tt->storage.depth));
 #if 0
         srand(i);
         uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
