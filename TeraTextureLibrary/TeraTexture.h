@@ -252,7 +252,7 @@ static size_t tt__BytesPerPage(tt_Format format, int32_t pageSize)
         return texelCount;     // BC6: 1 Byte per texel
     case TT_FORMAT_PBR:
         return  /* BC1 */ (texelCount >> 1) +
-                /* RG16 */ (texelCount << 2) +
+                /* R16 */ (texelCount << 1) +
                 /* BC5 */ (texelCount);
     }
 }
@@ -457,7 +457,7 @@ static void tt__ReleaseCacheTextures(tt_Texture *tt)
  */
 enum {
     TT__CACHE_GL_BUFFER_LEB,    // LEB heap
-    TT__CACHE_GL_BUFFER_MAP,    // mapping from nodeID to textureID
+    TT__CACHE_GL_BUFFER_INDIRECTION,    // mapping from nodeID to textureID
 
     TT__CACHE_GL_BUFFER_COUNT,
 };
@@ -476,17 +476,17 @@ static bool tt__LoadCacheBuffers(tt_Texture *tt)
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[TT__CACHE_GL_BUFFER_LEB]);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
-                    2 * sizeof(int32_t) + leb_HeapByteSize(tt->cache.leb),
+                    leb_HeapByteSize(tt->cache.leb) + 2 * sizeof(int32_t),
                     NULL,
                     0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-    glBindBuffer(GL_UNIFORM_BUFFER, buffers[TT__CACHE_GL_BUFFER_MAP]);
-    glBufferStorage(GL_UNIFORM_BUFFER,
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[TT__CACHE_GL_BUFFER_INDIRECTION]);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER,
                     sizeof(GLint) * tt->cache.capacity,
                     NULL,
                     0);
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     if (glGetError() != GL_NO_ERROR) {
         glDeleteBuffers(TT__CACHE_GL_BUFFER_COUNT, buffers);
@@ -563,7 +563,7 @@ enum {
     TT__UPDATER_GL_BUFFER_DISPATCH,
     TT__UPDATER_GL_BUFFER_LEB_CPU,
     TT__UPDATER_GL_BUFFER_LEB_GPU,
-    TT__UPDATER_GL_BUFFER_MAP,
+    TT__UPDATER_GL_BUFFER_INDIRECTION,
     TT__UPDATER_GL_BUFFER_PARAMETERS,
     TT__UPDATER_GL_BUFFER_STREAM,
 
@@ -619,7 +619,7 @@ static bool tt__LoadUpdaterBuffers(tt_Texture *tt)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindBuffer(GL_COPY_READ_BUFFER,
-                 buffers[TT__UPDATER_GL_BUFFER_MAP]);
+                 buffers[TT__UPDATER_GL_BUFFER_INDIRECTION]);
     glBufferStorage(GL_COPY_READ_BUFFER,
                     sizeof(GLint) * tt->cache.capacity,
                     NULL,
@@ -733,7 +733,6 @@ enum {
     TT__UPDATER_GL_PROGRAM_COUNT
 };
 
-#define TT__STRINGIFY(x) #x
 static const char *tt__LongestEdgeBisectionLibraryShaderSource()
 {
     static const char *str =
@@ -778,8 +777,6 @@ static const char *tt__LongestEdgeBisectionReductionPrepassShaderSource()
 
     return str;
 }
-#undef TT__STRINGIFY
-
 
 static void tt__LoadUpdaterProgramSplit(GLuint *program)
 {
@@ -1307,7 +1304,6 @@ static bool tt__LebAsynchronousReadBack(tt_Texture *tt)
 
 static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 {
-    // TODO: finalize !
     TT_LOG("tt_Texture: Producing page %i using texture %i",
            page->key,
            page->textureID);
@@ -1418,33 +1414,39 @@ static tt__Page *tt__LoadPage(tt_Texture *tt, uint32_t key)
     return page;
 }
 
-static void tt__UpdateCacheMapBuffer(tt_Texture *tt)
+static void tt__UpdateIndirectionBuffer(tt_Texture *tt)
 {
-    const GLuint *buffers = tt->updater.gl.buffers;
-    int32_t *map = (int32_t *)glMapNamedBufferRange(
-        buffers[TT__UPDATER_GL_BUFFER_MAP],
-        0, sizeof(GLint) * tt->cache.capacity,
-        GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
-    );
+    int32_t nodeCount = leb_NodeCount(tt->cache.leb);
 
-    for (int i = 0; i < leb_NodeCount(tt->cache.leb); ++i) {
-        leb_Node node = leb_DecodeNode(tt->cache.leb, i);
-        const tt__Page *page = tt__LoadPage(tt, node.id);
+    if (nodeCount <= tt->cache.capacity) {
+        const GLuint *buffers = tt->updater.gl.buffers;
+        int32_t *map = (int32_t *)glMapNamedBufferRange(
+            buffers[TT__UPDATER_GL_BUFFER_INDIRECTION],
+            0, sizeof(GLint) * tt->cache.capacity,
+            GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
+        );
 
-        map[i] = page->textureID;
+        for (int i = 0; i < nodeCount; ++i) {
+            leb_Node node = leb_DecodeNode(tt->cache.leb, i);
+            const tt__Page *page = tt__LoadPage(tt, node.id);
+
+            map[i] = page->textureID;
+        }
+
+        glUnmapNamedBuffer(buffers[TT__UPDATER_GL_BUFFER_INDIRECTION]);
+        glCopyNamedBufferSubData(
+            tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
+            tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_LEB],
+            0, 0, 2 * sizeof(int32_t) + leb_HeapByteSize(tt->cache.leb)
+        );
+        glCopyNamedBufferSubData(
+            tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_INDIRECTION],
+            tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_INDIRECTION],
+            0, 0, sizeof(GLint) * tt->cache.capacity
+        );
+    } else {
+        TT_LOG("tt_Texture: too many nodes -- skipping this update");
     }
-
-    glUnmapNamedBuffer(buffers[TT__UPDATER_GL_BUFFER_MAP]);
-    glCopyNamedBufferSubData(
-        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_LEB_CPU],
-        tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_LEB],
-        0, 0, 2 * sizeof(int32_t) + leb_HeapByteSize(tt->cache.leb)
-    );
-    glCopyNamedBufferSubData(
-        tt->updater.gl.buffers[TT__UPDATER_GL_BUFFER_MAP],
-        tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_MAP],
-        0, 0, sizeof(GLint) * tt->cache.capacity
-    );
 }
 
 TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args)
@@ -1452,7 +1454,7 @@ TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args)
     tt__UpdateLeb(tt, args);
 
     if (tt__LebAsynchronousReadBack(tt)) {
-        tt__UpdateCacheMapBuffer(tt);
+        tt__UpdateIndirectionBuffer(tt);
     }
 }
 
@@ -1463,7 +1465,7 @@ TTDEF GLuint tt_LebBuffer(const tt_Texture *tt)
 
 TTDEF GLuint tt_IndirectionBuffer(const tt_Texture *tt)
 {
-    return tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_MAP];
+    return tt->cache.gl.buffers[TT__CACHE_GL_BUFFER_INDIRECTION];
 }
 
 TTDEF void tt_BindPageTextures(const tt_Texture *tt, GLenum *textureUnits)
