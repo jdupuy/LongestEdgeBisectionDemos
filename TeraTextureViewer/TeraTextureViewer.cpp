@@ -13,7 +13,7 @@
 #include <stdexcept>
 #include <vector>
 
-#define TT_IMPLEMENTATION
+#define TT_IMPLEMENTATIONà
 #include "TeraTexture.h"
 
 #define LEB_IMPLEMENTATION
@@ -78,13 +78,13 @@ DebugOutputLogger(
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    } else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
+    } /*else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
         LOG("djg_warn: %s %s\n"                 \
                 "-- Begin -- GL_debug_output\n" \
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    }
+    }*/
 }
 
 void SetupDebugOutput(void)
@@ -119,7 +119,7 @@ struct ViewerManager {
     } camera;
     struct {bool freezeTexture;} flags;
     const struct {
-        int map, leb;
+        int indirection, leb;
     } bufferIndex;
 } g_viewer = {
     {NULL, {0}},
@@ -127,7 +127,7 @@ struct ViewerManager {
         {0.0f, 0.0f},
         0.0f
     }, {false},
-    {2, 3}
+    {7, 8}
 };
 // -----------------------------------------------------------------------------
 
@@ -151,8 +151,8 @@ void LoadProgram()
                      "#define TT_TEXTURES_PER_PAGE %i\n",
                      tt_TexturesPerPage(g_viewer.texture.tt));
     djgp_push_string(djp,
-                     "#define TT_BUFFER_BINDING_INDIRECTION_MAP %i\n",
-                     g_viewer.bufferIndex.map);
+                     "#define TT_BUFFER_BINDING_INDIRECTION %i\n",
+                     g_viewer.bufferIndex.indirection);
     djgp_push_file(djp, strcat2(buffer, g_app.dir.shader, "TeraTexture.glsl"));
     djgp_push_file(djp, strcat2(buffer, g_app.dir.shader, "Render.glsl"));
 
@@ -219,7 +219,7 @@ void UpdateTexture()
     float x = g_viewer.camera.pos.x;
     float y = g_viewer.camera.pos.y;
     dja::mat4 modelView = dja::mat4::homogeneous::orthographic(
-        x - zoomFactor + 0.5f, x + zoomFactor + 0.5f,
+        x - zoomFactor + 0.50001f, x + zoomFactor + 0.5f,
         y - zoomFactor + 0.5f, y + zoomFactor + 0.5f,
         -1.0f, 1.0f
     );
@@ -256,9 +256,10 @@ void Render()
     glDisable(GL_CULL_FACE);
     glClear(GL_COLOR_BUFFER_BIT);
     glViewport(256, 0, VIEWPORT_WIDTH, VIEWPORT_WIDTH);
-    glBindBufferBase(GL_UNIFORM_BUFFER,
-                     g_viewer.bufferIndex.map,
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     g_viewer.bufferIndex.indirection,
                      tt_IndirectionBuffer(g_viewer.texture.tt));
+
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      g_viewer.bufferIndex.leb,
                      tt_LebBuffer(g_viewer.texture.tt));
@@ -267,7 +268,7 @@ void Render()
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
     glUseProgram(0);
-    glBindBufferBase(GL_UNIFORM_BUFFER, g_viewer.bufferIndex.map, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, g_viewer.bufferIndex.indirection, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, g_viewer.bufferIndex.leb, 0);
 }
 
@@ -307,9 +308,12 @@ KeyboardCallback(
 
     if (action == GLFW_PRESS) {
         switch (key) {
-            case GLFW_KEY_ESCAPE:
-                glfwSetWindowShouldClose(window, GL_TRUE);
-            break;
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(window, GL_TRUE);
+        break;
+        case GLFW_KEY_R:
+            LoadProgram();
+        break;
             default: break;
         }
     }
