@@ -20,6 +20,7 @@ layout (location = 0) out vec4 o_FragColor;
 
 void main()
 {
-    o_FragColor = tt_texture(u_PageTextureID, i_TexCoord);
+    vec3 rgb = tt_texture(u_PageTextureID, i_TexCoord).rgb;
+    o_FragColor = vec4(HdrToLdr(rgb), 1);
 }
 #endif

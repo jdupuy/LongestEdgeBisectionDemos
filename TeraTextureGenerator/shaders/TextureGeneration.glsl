@@ -1,7 +1,8 @@
 uniform uint u_NodeID;
 uniform sampler2D u_InputSampler;
 
-layout(location = 0, rgba8) uniform image2D u_OutputSampler;
+//layout(location = 0, rgba8) uniform image2D u_OutputSampler;
+layout(location = 0, rgba32f) uniform image2D u_OutputSampler;
 
 void squareToTriangle(inout vec2 p)
 {

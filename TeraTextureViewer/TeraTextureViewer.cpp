@@ -33,6 +33,12 @@
 
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
 
+#ifndef M_PI
+#define M_PI 3.141592654
+#endif
+#define BUFFER_SIZE(x)    ((int)(sizeof(x)/sizeof(x[0])))
+#define BUFFER_OFFSET(i) ((char *)NULL + (i))
+
 char *strcat2(char *dst, const char *src1, const char *src2)
 {
     strcpy(dst, src1);
@@ -108,6 +114,14 @@ struct OpenGLManager {
     GLuint program;
 } g_gl = {0, 0};
 
+enum {
+    TONEMAP_UNCHARTED2,
+    TONEMAP_FILMIC,
+    TONEMAP_ACES,
+    TONEMAP_REINHARD,
+    TONEMAP_RAW
+};
+
 struct ViewerManager {
     struct {
         tt_Texture *tt;
@@ -116,6 +130,7 @@ struct ViewerManager {
     struct {
         struct {float x, y;} pos;
         float zoom;
+        int tonemap;
     } camera;
     struct {bool freezeTexture;} flags;
     const struct {
@@ -125,7 +140,8 @@ struct ViewerManager {
     {NULL, {0}},
     {
         {0.0f, 0.0f},
-        0.0f
+        0.0f,
+        TONEMAP_RAW
     }, {false},
     {7, 8}
 };
@@ -153,6 +169,23 @@ void LoadProgram()
     djgp_push_string(djp,
                      "#define TT_BUFFER_BINDING_INDIRECTION %i\n",
                      g_viewer.bufferIndex.indirection);
+    switch (g_viewer.camera.tonemap) {
+    case TONEMAP_UNCHARTED2:
+        djgp_push_string(djp, "#define TONEMAP_UNCHARTED2\n");
+        break;
+    case TONEMAP_FILMIC:
+        djgp_push_string(djp, "#define TONEMAP_FILMIC\n");
+        break;
+    case TONEMAP_ACES:
+        djgp_push_string(djp, "#define TONEMAP_ACES\n");
+        break;
+    case TONEMAP_REINHARD:
+        djgp_push_string(djp, "#define TONEMAP_REINHARD\n");
+        break;
+    default:
+        break;
+    }
+    djgp_push_file(djp, strcat2(buffer, g_app.dir.shader, "ToneMapping.glsl"));
     djgp_push_file(djp, strcat2(buffer, g_app.dir.shader, "TeraTexture.glsl"));
     djgp_push_file(djp, strcat2(buffer, g_app.dir.shader, "Render.glsl"));
 
@@ -196,7 +229,8 @@ void Load(int argc, char **argv)
         GL_TEXTURE3
     };
 
-    g_viewer.texture.tt = tt_Load("testRGB.tt", 2048);
+    //g_viewer.texture.tt = tt_Load("testRGB.tt", 2048);
+    g_viewer.texture.tt = tt_Load("testHDR.tt", 2048);
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
     tt_BindPageTextures(g_viewer.texture.tt, textureUnits);
@@ -281,6 +315,15 @@ void RenderGui()
     ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH));
     ImGui::Begin("Window");
     {
+        const char* eTonemaps[] = {
+            "Uncharted2",
+            "Filmic",
+            "Aces",
+            "Reinhard",
+            "Raw"
+        };
+        if (ImGui::Combo("Tonemap", &g_viewer.camera.tonemap, &eTonemaps[0], BUFFER_SIZE(eTonemaps)))
+            LoadProgram();
         ImGui::Text("Pos : %f %f", g_viewer.camera.pos.x, g_viewer.camera.pos.y);
         ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
         ImGui::SliderFloat("PixelPerTexel", &g_viewer.texture.args.pixelsPerTexelTarget, 0, 4);

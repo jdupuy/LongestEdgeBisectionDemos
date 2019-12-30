@@ -72,13 +72,13 @@ DebugOutputLogger(
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    } else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
+    } /*else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
         LOG("djg_warn: %s %s\n"                 \
                 "-- Begin -- GL_debug_output\n" \
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    }
+    }*/
 }
 
 void SetupDebugOutput(void)
@@ -109,6 +109,19 @@ void LoadTexture(const char *pathToFile)
 
     djgt_push_image_u8(djgt, pathToFile, true);
     djgt_to_gl(djgt, GL_TEXTURE_2D, GL_RGBA8, 1, 1, &texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    djgt_release(djgt);
+}
+
+void LoadTextureHDR(const char *pathToFile)
+{
+    djg_texture *djgt = djgt_create(0);
+    GLuint texture;
+
+    djgt_push_image_hdr(djgt, pathToFile, true);
+    djgt_to_gl(djgt, GL_TEXTURE_2D, GL_RGBA16F, 1, 1, &texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -219,6 +232,110 @@ void Load(int argc, char **argv, GLFWwindow *window)
     TT_FREE(data);
 }
 
+void LoadHDR(int argc, char **argv, GLFWwindow *window)
+{
+    int textureRes = 14;
+    int pageRes = 9;
+    int texelsPerPage = 1 << (2 * pageRes);
+    int dataByteSize  = 4 * 4 * texelsPerPage;
+    tt_Texture *tt;
+    float *data = (float *)TT_MALLOC(dataByteSize);
+
+    glActiveTexture(GL_TEXTURE0);
+    GLuint pageTexture;
+    glGenTextures(1, &pageTexture);
+    glBindTexture(GL_TEXTURE_2D, pageTexture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT,
+                 1 << pageRes, 1 << pageRes,
+                 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, NULL);
+
+    glActiveTexture(GL_TEXTURE1);
+    GLuint pageTextureData;
+    glGenTextures(1, &pageTextureData);
+    glBindTexture(GL_TEXTURE_2D, pageTextureData);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA32F,
+                 1 << pageRes, 1 << pageRes,
+                 0,
+                 GL_RGBA, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glActiveTexture(GL_TEXTURE2);
+    LoadTextureHDR(PATH_TO_ASSET_DIRECTORY "./kloofendal_16k.hdr");
+    glActiveTexture(GL_TEXTURE0);
+
+    GLuint program = LoadGenerationProgram();
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program, "u_InputSampler"), 2);
+    glUseProgram(0);
+
+    GLuint vertexArray;
+    glGenVertexArrays(1, &vertexArray);
+    glBindVertexArray(vertexArray);
+    glBindVertexArray(0);
+
+    // create the tt_Texture file
+    tt_Create("testHDR.tt", TT_FORMAT_HDR, textureRes, pageRes);
+    tt = tt_Load("testHDR.tt", 256);
+
+    GLint pageByteSize = 0;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0,
+                             GL_TEXTURE_COMPRESSED_IMAGE_SIZE,
+                             &pageByteSize);
+    TT_LOG("=> Compressed Byte size: %i (%i)", pageByteSize, texelsPerPage);
+
+    // create pages and write to disk
+    for (int i = 0; i < (2 << tt->storage.depth); ++i) {
+        TT_LOG("Generating page %i / %i", i + 1, (2 << tt->storage.depth));
+#if 0
+        srand(i);
+        uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
+        for (int i = 0; i < 1 << (2 * tt->storage.pages.size); ++i) {
+            data[4 * i    ] = r;
+            data[4 * i + 1] = g;
+            data[4 * i + 2] = b;
+            data[4 * i + 3] = 255u;
+        }
+
+        // updload image
+        glTextureSubImage2D(pageTexture, 0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            GL_RGBA, GL_UNSIGNED_BYTE, data);
+#else
+        glBindImageTexture(0, pageTextureData, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+        glViewport(0, 0, 1 << pageRes, 1 << pageRes);
+        glUseProgram(program);
+        glUniform1ui(glGetUniformLocation(program, "u_NodeID"), i);
+        glBindVertexArray(vertexArray);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindVertexArray(0);
+        glUseProgram(0);
+        glMemoryBarrier(GL_ALL_BARRIER_BITS);
+        glfwSwapBuffers(window);
+
+        // transfer data to compressed texture
+        glGetTextureImage(pageTextureData, 0, GL_RGBA, GL_FLOAT, dataByteSize, (void *)data);
+        glTextureSubImage2D(pageTexture, 0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            GL_RGBA, GL_FLOAT, data);
+#endif
+        // retrieve data
+        glGetCompressedTexImage(GL_TEXTURE_2D, 0, data);
+
+        fseek(tt->storage.stream, sizeof(tt__Header) + pageByteSize * i, SEEK_SET);
+        fwrite(data, pageByteSize, 1, tt->storage.stream);
+    }
+
+    glDeleteTextures(1, &pageTexture);
+
+    tt_Release(tt);
+    TT_FREE(data);
+}
+
 void Release()
 {
 
@@ -256,7 +373,8 @@ int main(int argc, char **argv)
 
     LOG("-- Begin -- Demo\n");
     try {
-        Load(argc, argv, window);
+        //Load(argc, argv, window);
+        LoadHDR(argc, argv, window);
         glfwTerminate();
     } catch (std::exception& e) {
         LOG("%s", e.what());
