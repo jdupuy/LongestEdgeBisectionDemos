@@ -23,69 +23,11 @@
 #define DJ_OPENGL_IMPLEMENTATION 1
 #include "dj_opengl.h"
 
-#define DJ_ALGEBRA_IMPLEMENTATION 1
-#include "dj_algebra.h"
-
 #ifndef PATH_TO_SRC_DIRECTORY
 #   define PATH_TO_SRC_DIRECTORY "./"
 #endif
 
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
-
-#if 1
-static void APIENTRY
-DebugOutputLogger(
-    GLenum source,
-    GLenum type,
-    GLuint,
-    GLenum severity,
-    GLsizei,
-    const GLchar* message,
-    const GLvoid*
-) {
-    char srcstr[32], typestr[32];
-
-    switch(source) {
-        case GL_DEBUG_SOURCE_API: strcpy(srcstr, "OpenGL"); break;
-        case GL_DEBUG_SOURCE_WINDOW_SYSTEM: strcpy(srcstr, "Windows"); break;
-        case GL_DEBUG_SOURCE_SHADER_COMPILER: strcpy(srcstr, "Shader Compiler"); break;
-        case GL_DEBUG_SOURCE_THIRD_PARTY: strcpy(srcstr, "Third Party"); break;
-        case GL_DEBUG_SOURCE_APPLICATION: strcpy(srcstr, "Application"); break;
-        case GL_DEBUG_SOURCE_OTHER: strcpy(srcstr, "Other"); break;
-        default: strcpy(srcstr, "???"); break;
-    };
-
-    switch(type) {
-        case GL_DEBUG_TYPE_ERROR: strcpy(typestr, "Error"); break;
-        case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: strcpy(typestr, "Deprecated Behavior"); break;
-        case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR: strcpy(typestr, "Undefined Behavior"); break;
-        case GL_DEBUG_TYPE_PORTABILITY: strcpy(typestr, "Portability"); break;
-        case GL_DEBUG_TYPE_PERFORMANCE: strcpy(typestr, "Performance"); break;
-        case GL_DEBUG_TYPE_OTHER: strcpy(typestr, "Message"); break;
-        default: strcpy(typestr, "???"); break;
-    }
-
-    if (severity == GL_DEBUG_SEVERITY_HIGH) {
-        LOG("djg_error: %s %s\n"                \
-                "-- Begin -- GL_debug_output\n" \
-                "%s\n"                              \
-                "-- End -- GL_debug_output\n",
-                srcstr, typestr, message);
-    } /*else if (severity == GL_DEBUG_SEVERITY_MEDIUM) {
-        LOG("djg_warn: %s %s\n"                 \
-                "-- Begin -- GL_debug_output\n" \
-                "%s\n"                              \
-                "-- End -- GL_debug_output\n",
-                srcstr, typestr, message);
-    }*/
-}
-
-void SetupDebugOutput(void)
-{
-    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-    glDebugMessageCallback(&DebugOutputLogger, NULL);
-}
-#endif
 
 enum { TEXTURE_INPUT, TEXTURE_PAGE_RAW, TEXTURE_PAGE, TEXTURE_COUNT };
 
@@ -289,7 +231,6 @@ int main(int argc, char **argv)
     }
 
     glfwSwapBuffers(window);
-    SetupDebugOutput();
     Run(argc, argv);
     glfwTerminate();
 
