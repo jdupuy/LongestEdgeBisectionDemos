@@ -134,7 +134,7 @@ void Run(int argc, char **argv)
     //const char *pathToFile = PATH_TO_ASSET_DIRECTORY "./debug-texture.png";
     const char *pathToFile = PATH_TO_ASSET_DIRECTORY "./kloofendal_48d_partly_cloudy_16k.hdr";
     bool isHdr = strcmp(strrchr(pathToFile, '.'), ".hdr") == 0;
-    int textureRes = 16;
+    int textureRes = 12;
     int pageRes = 9;
     int texelsPerPage = 1 << (2 * pageRes);
     tt_Texture *tt;
