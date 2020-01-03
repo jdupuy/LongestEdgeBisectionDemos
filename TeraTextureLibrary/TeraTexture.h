@@ -1310,9 +1310,9 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 
     const GLuint *buffers = tt->updater.gl.buffers;
     uint32_t streamByteOffset = tt->updater.streamByteOffset;
-    uint32_t streamByteSize = tt__BytesPerPage(tt->storage.pages.format,
+    uint64_t streamByteSize = tt__BytesPerPage(tt->storage.pages.format,
                                                tt->storage.pages.size);
-    uint8_t *data;
+    uint8_t *pageData;
 
     if (streamByteOffset + streamByteSize > TT__UPDATER_STREAM_BUFFER_BYTE_SIZE) {
         TT_LOG("tt_Texture: orphaned stream buffer");
@@ -1321,39 +1321,19 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
     }
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffers[TT__UPDATER_GL_BUFFER_STREAM]);
-    data = (uint8_t *)glMapBufferRange(
+    pageData = (uint8_t *)glMapBufferRange(
         GL_PIXEL_UNPACK_BUFFER,
         streamByteOffset, streamByteSize,
-        GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
+        GL_MAP_WRITE_BIT// | GL_MAP_UNSYNCHRONIZED_BIT // XXX: UNSYNCHRONIZED sometimes produces shitty results
     );
 
-#if 0 // debug: load pseudo random texture
-    srand(page->key);
-    uint8_t r = rand() & 255u, g = rand() & 255u, b = rand() & 255u;
-    for (int i = 0; i < 1 << (2 * tt->storage.pages.size); ++i) {
-        data[4 * i    ] = r;
-        data[4 * i + 1] = g;
-        data[4 * i + 2] = b;
-        data[4 * i + 3] = 255u;
-    }
-#else
     fseek(tt->storage.stream,
-          sizeof(tt__Header) + page->key * streamByteSize,
+          sizeof(tt__Header) + (uint64_t)page->key * streamByteSize,
           SEEK_SET);
-    fread(data, streamByteSize, 1, tt->storage.stream);
-#endif
+    fread(pageData, streamByteSize, 1, tt->storage.stream);
 
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-#if 0
-    glTextureSubImage3D(tt->cache.gl.textures[0],
-                        0,
-                        0, 0, page->textureID,
-                        1 << tt->storage.pages.size,
-                        1 << tt->storage.pages.size,
-                        1,
-                        GL_RGBA, GL_UNSIGNED_BYTE,
-                        TT__BUFFER_OFFSET(streamByteOffset));
-#else
+
     /*for (int i = 0; i < tt_TexturesPerPage(tt); ++i)*/ {
         glCompressedTextureSubImage3D(tt->cache.gl.textures[0],
                                       0,
@@ -1365,7 +1345,7 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
                                       streamByteSize,
                                       TT__BUFFER_OFFSET(streamByteOffset));
     }
-#endif
+
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     tt->updater.streamByteOffset = streamByteOffset + streamByteSize;
