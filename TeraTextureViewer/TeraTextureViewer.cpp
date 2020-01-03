@@ -13,7 +13,12 @@
 #include <stdexcept>
 #include <vector>
 
-#define TT_IMPLEMENTATIONà
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+#define TT_IMPLEMENTATION
 #include "TeraTexture.h"
 
 #define LEB_IMPLEMENTATION
@@ -105,8 +110,19 @@ struct AppManager {
         const char *shader;
         const char *output;
     } dir;
+    struct {
+        int on, frame, capture;
+    } recorder;
+    int frame, frameLimit;
 } g_app = {
-    /*dir*/    {PATH_TO_SRC_DIRECTORY "./shaders/", "./"},
+    /*dir*/ {
+        PATH_TO_SRC_DIRECTORY "./shaders/",
+        "./"
+    },
+    /*record*/ {
+        false, 0, 0
+    },
+    /*frame*/  0, -1
 };
 
 struct OpenGLManager {
@@ -229,8 +245,8 @@ void Load(int argc, char **argv)
         GL_TEXTURE3
     };
 
-    //g_viewer.texture.tt = tt_Load("testRGB.tt", 2048);
-    g_viewer.texture.tt = tt_Load("testHDR.tt", 2048);
+    g_viewer.texture.tt = tt_Load("testRGB.tt", 2048);
+    //g_viewer.texture.tt = tt_Load("testHDR.tt", 2048);
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
     tt_BindPageTextures(g_viewer.texture.tt, textureUnits);
@@ -334,6 +350,19 @@ void RenderGui()
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    // screen recording
+    if (g_app.recorder.on) {
+        char name[64], path[1024];
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        sprintf(name, "capture_%02i_%09i",
+                g_app.recorder.capture,
+                g_app.recorder.frame);
+        strcat2(path, g_app.dir.output, name);
+        djgt_save_glcolorbuffer_bmp(GL_BACK, GL_RGB, path);
+        ++g_app.recorder.frame;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -357,7 +386,14 @@ KeyboardCallback(
         case GLFW_KEY_R:
             LoadProgram();
         break;
-            default: break;
+        case GLFW_KEY_C:
+            if (g_app.recorder.on) {
+                g_app.recorder.frame = 0;
+                ++g_app.recorder.capture;
+            }
+            g_app.recorder.on = !g_app.recorder.on;
+        break;
+        default: break;
         }
     }
 }

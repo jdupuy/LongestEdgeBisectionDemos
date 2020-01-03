@@ -130,7 +130,7 @@ void LoadTextureHDR(const char *pathToFile)
 
 void Load(int argc, char **argv, GLFWwindow *window)
 {
-    int textureRes = 12;
+    int textureRes = 14;
     int pageRes = 9;
     int texelsPerPage = 1 << (2 * pageRes);
     int dataByteSize  = 4 * texelsPerPage;
@@ -373,8 +373,8 @@ int main(int argc, char **argv)
 
     LOG("-- Begin -- Demo\n");
     try {
-        //Load(argc, argv, window);
-        LoadHDR(argc, argv, window);
+        Load(argc, argv, window);
+        //LoadHDR(argc, argv, window);
         glfwTerminate();
     } catch (std::exception& e) {
         LOG("%s", e.what());
