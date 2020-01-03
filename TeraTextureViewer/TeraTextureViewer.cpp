@@ -221,7 +221,7 @@ void LoadProgram()
         locations
     );
 
-    TT_LOG("loc: %i\n", glGetUniformLocation(g_gl.program, "tt_Textures[0]"));
+    //TT_LOG("loc: %i\n", glGetUniformLocation(g_gl.program, "tt_Textures[0]"));
 
     djgp_release(djp);
 }
@@ -245,7 +245,7 @@ void Load(int argc, char **argv)
         GL_TEXTURE3
     };
 
-    g_viewer.texture.tt = tt_Load("testRGB.tt", 2048);
+    g_viewer.texture.tt = tt_Load("texture.tt", /* cache size */2048);
     //g_viewer.texture.tt = tt_Load("testHDR.tt", 2048);
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
