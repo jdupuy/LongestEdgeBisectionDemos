@@ -152,8 +152,8 @@ unset(SRC_FILES)
 unset(DEMO)
 
 # ------------------------------------------------------------------------------
-set(DEMO TeraTextureGenerator)
-set(SRC_DIR TeraTextureGenerator)
+set(DEMO TeraTextureConverter)
+set(SRC_DIR TeraTextureConverter)
 include_directories(${SRC_DIR})
 aux_source_directory(${SRC_DIR} SRC_FILES)
 add_executable(${DEMO} ${IMGUI_SRC_FILES} ${SRC_FILES} ${SRC_DIR}/glad/glad.c)
