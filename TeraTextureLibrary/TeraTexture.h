@@ -12,12 +12,64 @@ extern "C" {
 #define TTDEF extern
 #endif
 
-// supported formats
-enum tt_Format {
-    TT_FORMAT_RGB,  // RGB unsigned byte
-    TT_FORMAT_HDR,  // RGB 16-bit floating point
-    TT_FORMAT_PBR   // displacement + normals + albedo
-};
+// supported page texture formats
+typedef enum {
+    // 8-bit
+    TT_FORMAT_R8,
+    TT_FORMAT_RG8,
+    TT_FORMAT_RGBA8,
+    // 16-bit
+    TT_FORMAT_R16,
+    TT_FORMAT_RG16,
+    TT_FORMAT_RGBA16,
+    // half
+    TT_FORMAT_R16F,
+    TT_FORMAT_RG16F,
+    TT_FORMAT_RGBA16F,
+    // float
+    TT_FORMAT_R32F,
+    TT_FORMAT_RG32F,
+    TT_FORMAT_RGBA32F,
+    // BCn
+    TT_FORMAT_BC1,
+    TT_FORMAT_BC1_ALPHA,
+    TT_FORMAT_BC2,
+    TT_FORMAT_BC3,
+    TT_FORMAT_BC4,
+    TT_FORMAT_BC5,
+    TT_FORMAT_BC6,
+    TT_FORMAT_BC6_SIGNED,
+    TT_FORMAT_BC7,
+    TT_FORMAT_BC7_SRGB
+} tt_Format;
+
+// data type
+typedef struct tt_Texture tt_Texture;
+
+// create a file
+TTDEF bool tt_Create(const char *file,
+                     int64_t textureSize,
+                     int64_t pageSize,
+                     tt_Format pageFormat);
+TTDEF bool tt_CreateLayered(const char *file,
+                            int64_t textureSize,
+                            int64_t texturesPerPage,
+                            const int64_t *pageTextureSizes,
+                            const tt_Format *pageTextureFormats);
+
+// ctor / dtor
+TTDEF tt_Texture *tt_Load(const char *filename, int64_t cacheCapacity);
+TTDEF void tt_Release(tt_Texture *tt);
+
+// queries
+TTDEF int64_t tt_MaxTexturesPerPage();
+TTDEF int64_t tt_StorageSize(const tt_Texture *tt);
+TTDEF int64_t tt_PageCount(const tt_Texture *tt);
+TTDEF int64_t tt_TexturesPerPage(const tt_Texture *tt);
+TTDEF tt_Format tt_PageTextureFormat(const tt_Texture *tt, int64_t textureID);
+TTDEF int64_t tt_PageTextureSize(const tt_Texture *tt, int64_t textureID);
+TTDEF int64_t tt_BytesPerPage(const tt_Texture *tt);
+TTDEF int64_t tt_BytesPerPageTexture(const tt_Texture *tt, int64_t textureID);
 
 // projection type
 enum tt_Projection {
@@ -41,25 +93,12 @@ typedef struct {
     float pixelsPerTexelTarget;             // target pixels per texel density
 } tt_UpdateArgs;
 
-// data type
-typedef struct tt_Texture tt_Texture;
-
-// create a file
-TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize);
-
-// ctor / dtor
-TTDEF tt_Texture *tt_Load(const char *filename, int cacheCapacity);
-TTDEF void tt_Release(tt_Texture *tt);
-
 // update
 TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args);
 
 // raw OpenGL accessors
 TTDEF GLuint tt_LebBuffer(const tt_Texture *tt);
 TTDEF GLuint tt_IndirectionBuffer(const tt_Texture *tt);
-
-// queries
-TTDEF int tt_TexturesPerPage(const tt_Texture *tt);
 
 // texture binding
 TTDEF void tt_BindPageTextures(const tt_Texture *tt, GLenum *textureUnits);
@@ -120,6 +159,32 @@ typedef struct {
 
 
 /*******************************************************************************
+ * Per-Page Texture Info Data Structure
+ *
+ */
+typedef struct {
+    int8_t size;
+    int8_t format;
+} tt__PageTextureInfo;
+
+
+/*******************************************************************************
+ * Header File Data Structure
+ *
+ * This represents the header we use to uniquely identify the tt_Texture files
+ * and provide the fundamental information to properly decode the rest of the
+ * file.
+ *
+ */
+typedef struct {
+    int64_t magic;              // integer value
+    int32_t depth;              // LEB depth
+    int32_t texturesPerPage;    // number of textures per page
+    tt__PageTextureInfo textures[/* max number of textures per page: */ 8];
+} tt__Header;
+
+
+/*******************************************************************************
  * Texture Data Structure
  *
  * This is the main data structure of the library. It consists of 3 different
@@ -128,24 +193,22 @@ typedef struct {
  * storing the parts of the texture that are stored in GPU memory. Finally,
  * the updater is responsible for updating the cache, by loading necessary
  * pages into memory.
+ * Note that the storage is graphics-API agnostic, while the cache and updater
+ * rely on OpenGL (porting to different APIs should be straightforward).
  *
  */
 struct tt_Texture {
     struct {
         FILE *stream;               // pointer to file
-        struct {
-            int size;               // side resolution of the pages
-            enum tt_Format format;  // format of the pages
-        } pages;
-        int depth;                  // max LEB subdivision depth
+        tt__Header header;          // file header
     } storage;
 
     struct {
         tt__Page *pages;            // LRU map
         leb_Heap *leb;              // LEB
         struct {
-            GLuint      *textures;  // texture names
-            GLuint      *buffers;   // handles (UBO) + LEB Heap (SSBO)
+            GLuint *textures;       // texture names
+            GLuint *buffers;        // handles (UBO) + LEB Heap (SSBO)
         } gl;
         int capacity;               // capacity in number of pages
     } cache;
@@ -164,50 +227,18 @@ struct tt_Texture {
 
 
 /*******************************************************************************
- * Header File Data Structure
- *
- * This represents the header we use to uniquely identify the tt_Texture files
- * and provide the fundamental information to properly decode the rest of the
- * file.
- *
- */
-typedef struct {
-    int32_t magic;          // integer value
-    int32_t format;         // texture format
-    int32_t depth;          // LEB depth
-    int32_t pageSize;       // page resolution
-} tt__Header;
-
-
-/*******************************************************************************
- * Update Parameters Data Structure
- *
- * This data structure holds the parameters used to update the cache on the GPU.
- *
- */
-typedef struct {
-    float modelView[16];        // modelview transformation matrix
-    struct {
-        float x, y, z, w;
-    } frustumPlanes[6];         // frustum planes
-    float lodFactor[2];         // constants for LoD calculation
-    float align[24];            // align to power of two
-} tt__UpdateParameters;
-
-
-/*******************************************************************************
  * Magic -- Generates the magic identifier
  *
  * Each tt_Texture file starts with 4 Bytes that allow us to check if the file
  * under reading is actually a tt_Texture file.
  *
  */
-static int32_t tt__Magic()
+static int64_t tt__Magic()
 {
     const union {
-        char    string[4];
-        int32_t numeric;
-    } magic = {.string = {'t', 't', '0', '1'}};
+        char    string[8];
+        int64_t numeric;
+    } magic = {.string = {'T', 'T', 'e', 'x', 't', 'u', 'r', 'e'}};
 
     return magic.numeric;
 }
@@ -221,9 +252,9 @@ static int32_t tt__Magic()
  * which is what this function returns.
  *
  */
-static int32_t tt__SizeToLebDepth(int32_t size, int32_t pageSize)
+static int32_t tt__SizeToLebDepth(int32_t textureSize, int32_t pageSize)
 {
-    return 2 * (size - pageSize) + 1;
+    return 2 * (textureSize - pageSize) + 1;
 }
 
 
@@ -231,30 +262,169 @@ static int32_t tt__SizeToLebDepth(int32_t size, int32_t pageSize)
  * PageCount -- Computes the number of pages stored in the tt_Texture file
  *
  */
-static int32_t tt__PageCount(int32_t lebDepth)
+static int64_t tt__PageCount(int32_t lebDepth)
 {
     return 2 << lebDepth;
 }
 
+TTDEF int64_t tt_PageCount(const tt_Texture *tt)
+{
+    return tt__PageCount(tt->storage.header.depth);
+}
+
 
 /*******************************************************************************
- * BytesPerPage -- Computes the number of pages stored in the tt_Texture file
+ * BytesPerPageTexture -- Computes the Byte size of a page texture
  *
  */
-static size_t tt__BytesPerPage(tt_Format format, int32_t pageSize)
+static int64_t tt__BytesPerPageTexture(int64_t textureSize, tt_Format format)
 {
-    size_t texelCount = 1u << (2 * pageSize);
+    int64_t texelCount = 1u << (2 * textureSize);
 
     switch (format) {
-    case TT_FORMAT_RGB:
-        return texelCount >> 1;// BC1: 1/2 Byte per texel
-    case TT_FORMAT_HDR:
-        return texelCount;     // BC6: 1 Byte per texel
-    case TT_FORMAT_PBR:
-        return  /* BC1 */ (texelCount >> 1) +
-                /* R16 */ (texelCount << 1) +
-                /* BC5 */ (texelCount);
+    case TT_FORMAT_BC1:
+    case TT_FORMAT_BC1_ALPHA:
+    case TT_FORMAT_BC4:
+        return texelCount >> 1; // 1/2 Byte per texel
+
+    case TT_FORMAT_R8:
+    case TT_FORMAT_BC2:
+    case TT_FORMAT_BC3:
+    case TT_FORMAT_BC5:
+    case TT_FORMAT_BC6:
+    case TT_FORMAT_BC6_SIGNED:
+    case TT_FORMAT_BC7:
+    case TT_FORMAT_BC7_SRGB:
+        return texelCount;      // 1 Byte per texel
+
+    case TT_FORMAT_RG8:
+    case TT_FORMAT_R16:
+    case TT_FORMAT_R16F:
+        return texelCount << 1; // 2 Bytes per texel
+
+    case TT_FORMAT_RGBA8:
+    case TT_FORMAT_RG16:
+    case TT_FORMAT_RG16F:
+    case TT_FORMAT_R32F:
+        return texelCount << 2; // 4 Bytes per texel
+
+    case TT_FORMAT_RGBA16:
+    case TT_FORMAT_RGBA16F:
+    case TT_FORMAT_RG32F:
+        return texelCount << 3; // 8 Bytes per texel
+
+    case TT_FORMAT_RGBA32F:
+        return texelCount << 4; // 16 Bytes per texel
     }
+}
+
+TTDEF int64_t tt_BytesPerPageTexture(const tt_Texture *tt, int64_t textureID)
+{
+    const tt__PageTextureInfo *info = &tt->storage.header.textures[textureID];
+
+    return tt__BytesPerPageTexture((int64_t)info->size, (tt_Format)info->format);
+}
+
+
+/*******************************************************************************
+ * BytesPerPage -- Computes the Byte size of a single page stored
+ *
+ */
+static int64_t tt__BytesPerPage(const tt__Header *header)
+{
+    const tt__PageTextureInfo *textures = header->textures;
+    int64_t size = 0;
+
+    for (int64_t i = 0; i < header->texturesPerPage; ++i) {
+        size+= tt__BytesPerPageTexture((int64_t)textures[i].size,
+                                       (tt_Format)textures[i].format);
+    }
+
+    return size;
+}
+
+TTDEF int64_t tt_BytesPerPage(const tt_Texture *tt)
+{
+    return tt__BytesPerPage(&tt->storage.header);
+}
+
+
+/*******************************************************************************
+ * PageTextureFormat -- Returns the format of the page texture indexed by textureID
+ *
+ */
+TTDEF tt_Format tt_PageTextureFormat(const tt_Texture *tt, int64_t textureID)
+{
+    return (tt_Format)tt->storage.header.textures[textureID].format;
+}
+
+
+/*******************************************************************************
+ * PageTextureSize -- Returns the size of the page texture indexed by textureID
+ *
+ */
+TTDEF int64_t tt_PageTextureSize(const tt_Texture *tt, int64_t textureID)
+{
+    return (int64_t)tt->storage.header.textures[textureID].size;
+}
+
+
+/*******************************************************************************
+ * StorageSize -- Returns the size of the tt_Texture file
+ *
+ */
+TTDEF int64_t tt_StorageSize(const tt_Texture *tt)
+{
+    return (sizeof(tt__Header) + tt_BytesPerPage(tt) * tt_PageCount(tt));
+}
+
+
+/*******************************************************************************
+ * MaxTexturesPerPage
+ *
+ * This procedure returns the maximum number of textures per page.
+ * Rather than having a macro I prefer to hardcode the number in
+ * the tt__Header structure and query it directly here.
+ *
+ */
+TTDEF int64_t tt_MaxTexturesPerPage()
+{
+    tt__Header head;
+
+    return TT__BUFFER_SIZE(head.textures);
+}
+
+
+/*******************************************************************************
+ * Create header
+ *
+ * This procedure initializes a tt_Texture file header given an input
+ * texture size, and a description of pages.
+ *
+ */
+static tt__Header
+tt__CreateHeader(
+    int64_t textureSize,
+    int64_t texturesPerPage,
+    const int64_t* pageTextureSizes,
+    const tt_Format* pageTextureFormats
+) {
+    TT_ASSERT(texturesPerPage < tt_MaxTexturesPerPage() && "texturesPerPage should be less than tt_MaxTexturesPerPage()");
+    TT_ASSERT(textureSize > pageTextureSizes[0] && "the page size should be less than the size of the texture");
+
+    tt__Header header = {
+        tt__Magic(),
+        tt__SizeToLebDepth(textureSize, pageTextureSizes[0]),
+        (int32_t)texturesPerPage,
+        {{0, 0}}
+    };
+
+    for (int64_t i = 0; i < texturesPerPage; ++i) {
+        header.textures[i].size     = (int8_t)pageTextureSizes[i];
+        header.textures[i].format   = (int8_t)pageTextureFormats[i];
+    }
+
+    return header;
 }
 
 
@@ -263,22 +433,29 @@ static size_t tt__BytesPerPage(tt_Format format, int32_t pageSize)
  *
  * This procedure creates a file on disk that stores the data. The function
  * returns true if the file is successfully created, and false otherwise.
- * The format describes the format of the texture.
- * The xy describes the resolution of the texture in base 2 logarithm.
- * The zw describes the resolution of the pages in base 2 logarithm.
+ * The size describes the texel resolution of the texture in base 2 logarithm.
+ * The user is required to provide the number of textures per page, and
+ * an array of PageTextureInfo that provides information about each texture
+ * stored within a page.
+ * Note that we compute the LEB depth depending on the size of the Tera Texture,
+ * and the size of the first texture in the page list.
  *
  */
-TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize)
-{
-    TT_ASSERT(size > pageSize && "pageSize should be less than size");
-
-    int lebDepth = tt__SizeToLebDepth(size, pageSize);
-    tt__Header header = { tt__Magic(), format, lebDepth, pageSize };
-    size_t bytesPerPage = tt__BytesPerPage(format, pageSize);
+TTDEF bool
+tt_CreateLayered(
+    const char *file,
+    int64_t textureSize,
+    int64_t texturesPerPage,
+    const int64_t *pageTextureSizes,
+    const tt_Format *pageTextureFormats
+) {
+    tt__Header header = tt__CreateHeader(textureSize,
+                                         texturesPerPage,
+                                         pageTextureSizes,
+                                         pageTextureFormats);
+    int64_t bytesPerPage = tt__BytesPerPage(&header);
     uint8_t *pageData = (uint8_t *)TT_MALLOC(bytesPerPage);
-    int pageCount = tt__PageCount(lebDepth);
     FILE *stream = fopen(file, "wb");
-
 
     if (!stream) {
         TT_LOG("tt_Texture: fopen failed");
@@ -286,7 +463,7 @@ TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize)
         return false;
     }
 
-    if (lebDepth >= 28) {
+    if (header.depth >= 28) {
         TT_LOG("tt_Texture: unsupported resolution");
         fclose(stream);
 
@@ -301,7 +478,7 @@ TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize)
     }
 
     memset(pageData, 0, bytesPerPage);
-    for (int i = 0; i < pageCount; ++i) {
+    for (int64_t i = 0; i < tt__PageCount(header.depth); ++i) {
         if (fwrite(pageData, bytesPerPage, 1, stream) != 1) {
             TT_LOG("tt_Texture: page dump failed");
             fclose(stream);
@@ -313,10 +490,19 @@ TTDEF bool tt_Create(const char *file, tt_Format format, int size, int pageSize)
 
     fclose(stream);
 
-    TT_LOG("tt_Texture: wrote %.1f MiBytes to disk",
-           (float)(sizeof(header) + pageCount * bytesPerPage) / (float)(1024 * 1024));
+    TT_LOG("tt_Texture: file creation successful");
 
     return true;
+}
+
+TTDEF bool
+tt_Create(
+    const char *file,
+    int64_t textureSize,
+    int64_t pageSize,
+    tt_Format pageFormat
+) {
+    return tt_CreateLayered(file, textureSize, 1, &pageSize, &pageFormat);
 }
 
 
@@ -341,12 +527,10 @@ static bool tt__ReadHeader(FILE *stream, tt__Header *header)
  *
  */
 static void
-tt__LoadStorage(tt_Texture *tt, const tt__Header header, FILE *stream)
+tt__LoadStorage(tt_Texture *tt, const tt__Header *header, FILE *stream)
 {
     tt->storage.stream = stream;
-    tt->storage.pages.size = header.pageSize;
-    tt->storage.pages.format = (tt_Format)header.format;
-    tt->storage.depth = header.depth;
+    tt->storage.header = *header;
 }
 
 
@@ -364,15 +548,9 @@ static void tt__ReleaseStorage(tt_Texture *tt)
  * TexturesPerPage -- Determines the number of OpenGL texture per page
  *
  */
-TTDEF int tt_TexturesPerPage(const tt_Texture *tt)
+TTDEF int64_t tt_TexturesPerPage(const tt_Texture *tt)
 {
-    switch (tt->storage.pages.format) {
-    case TT_FORMAT_HDR:
-    case TT_FORMAT_RGB:
-        return 1;
-    case TT_FORMAT_PBR:
-        return 3;
-    }
+    return tt->storage.header.texturesPerPage;
 }
 
 
@@ -382,21 +560,34 @@ TTDEF int tt_TexturesPerPage(const tt_Texture *tt)
  */
 static GLint tt__PageTextureInternalFormat(const tt_Texture *tt, int textureID)
 {
-    switch (tt->storage.pages.format) {
-    case TT_FORMAT_RGB:
-        return GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
-    case TT_FORMAT_HDR:
-        return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
-    case TT_FORMAT_PBR: {
-        GLint formats[] = {
-            /* albedo */GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
-            /* displacement */GL_RG16,
-            /* normal map */GL_COMPRESSED_RED_GREEN_RGTC2_EXT
-        };
+    const tt__PageTextureInfo *info = &tt->storage.header.textures[textureID];
 
-        return formats[textureID];
+    switch (info->format) {
+    case TT_FORMAT_R8:          return GL_R8;
+    case TT_FORMAT_RG8:         return GL_RG8;
+    case TT_FORMAT_RGBA8:       return GL_RGBA8;
+    case TT_FORMAT_R16:         return GL_R16;
+    case TT_FORMAT_RG16:        return GL_RG16;
+    case TT_FORMAT_RGBA16:      return GL_RGBA16;
+    case TT_FORMAT_R16F:        return GL_R16F;
+    case TT_FORMAT_RG16F:       return GL_RG16F;
+    case TT_FORMAT_RGBA16F:     return GL_RGBA16F;
+    case TT_FORMAT_R32F:        return GL_R32F;
+    case TT_FORMAT_RG32F:       return GL_RG32F;
+    case TT_FORMAT_RGBA32F:     return GL_RGBA32F;
+    case TT_FORMAT_BC1:         return GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
+    case TT_FORMAT_BC1_ALPHA:   return GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+    case TT_FORMAT_BC2:         return GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
+    case TT_FORMAT_BC3:         return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    case TT_FORMAT_BC4:         return GL_COMPRESSED_RED_RGTC1_EXT;
+    case TT_FORMAT_BC5:         return GL_COMPRESSED_RED_GREEN_RGTC2_EXT;
+    case TT_FORMAT_BC6:         return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
+    case TT_FORMAT_BC6_SIGNED:  return GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT;
+    case TT_FORMAT_BC7:         return GL_COMPRESSED_RGBA_BPTC_UNORM;
+    case TT_FORMAT_BC7_SRGB:    return GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
     }
-    }
+
+    return 0;
 }
 
 /*******************************************************************************
@@ -405,16 +596,16 @@ static GLint tt__PageTextureInternalFormat(const tt_Texture *tt, int textureID)
  */
 static bool tt__LoadCacheTextures(tt_Texture *tt)
 {
-    int textureSize = 1 << tt->storage.pages.size;
-    int texturesPerPage = tt_TexturesPerPage(tt);
+    int64_t texturesPerPage = tt_TexturesPerPage(tt);
     GLuint *textures = (GLuint *)TT_MALLOC(sizeof(GLuint) * texturesPerPage);
 
-    TT_LOG("tt_Texture: allocating %lu MiBytes of GPU memory using %i texture(s)",
-           (tt->cache.capacity * texturesPerPage * tt__BytesPerPage(tt->storage.pages.format, tt->storage.pages.size)) >> 20,
+    TT_LOG("tt_Texture: allocating %lu MiBytes of GPU memory using %li texture(s)",
+           (tt->cache.capacity * texturesPerPage * tt_BytesPerPage(tt)) >> 20,
            texturesPerPage);
     glGenTextures(texturesPerPage, textures);
 
-    for (int i = 0; i < texturesPerPage; ++i) {
+    for (int64_t i = 0; i < texturesPerPage; ++i) {
+        GLint textureSize = 1 << (tt->storage.header.textures[i].size);
         GLuint *texture = &textures[i];
         GLint internalFormat = tt__PageTextureInternalFormat(tt, i);
 
@@ -519,7 +710,7 @@ static void tt__ReleaseCacheBuffers(tt_Texture *tt)
 static bool tt__LoadCache(tt_Texture *tt, int cachePageCapacity)
 {
     tt->cache.pages = NULL;
-    tt->cache.leb = leb_CreateMinMax(1, tt->storage.depth);
+    tt->cache.leb = leb_CreateMinMax(1, tt->storage.header.depth);
     tt->cache.capacity = cachePageCapacity;
 
     if (!tt__LoadCacheTextures(tt)) {
@@ -569,6 +760,22 @@ enum {
 
     TT__UPDATER_GL_BUFFER_COUNT
 };
+
+
+/*******************************************************************************
+ * Update Parameters Data Structure
+ *
+ * This data structure holds the parameters used to update the cache on the GPU.
+ *
+ */
+typedef struct {
+    float modelView[16];        // modelview transformation matrix
+    struct {
+        float x, y, z, w;
+    } frustumPlanes[6];         // frustum planes
+    float lodFactor[2];         // constants for LoD calculation
+    float align[24];            // align to power of two
+} tt__UpdateParameters;
 
 
 /*******************************************************************************
@@ -1003,7 +1210,7 @@ TTDEF tt_Texture *tt_Load(const char *filename, int cacheCapacity)
     }
 
     tt = (tt_Texture *)TT_MALLOC(sizeof(*tt));
-    tt__LoadStorage(tt, header, stream);
+    tt__LoadStorage(tt, &header, stream);
 
     if (!tt__LoadCache(tt, cacheCapacity)) {
         tt__ReleaseStorage(tt);
@@ -1097,7 +1304,7 @@ tt__StreamLodFactor(
     const tt_UpdateArgs *args
 ) {
     float framebufferHeight = (float)args->framebuffer.height;
-    float pageResolution    = (float)(1 << tt->storage.pages.size);
+    float pageResolution    = (float)(1 << tt->storage.header.textures[0].size);
     float virtualResolution = framebufferHeight / pageResolution;
     float pixelsPerTexelTarget = args->pixelsPerTexelTarget;
     float nearPlaneHeight = (float)args->worldSpaceImagePlaneAtUnitDepth.height;
@@ -1189,7 +1396,7 @@ static void tt__RunSplitMergeKernel(tt_Texture *tt, const tt_UpdateArgs *args)
 static void tt__RunSumReductionKernel(tt_Texture *tt)
 {
     const GLuint *programs = tt->updater.gl.programs;
-    int it = tt->storage.depth;
+    int it = tt->storage.header.depth;
 
     glUseProgram(programs[TT__UPDATER_GL_PROGRAM_REDUCTION_PREPASS]);
     if (true) {
@@ -1309,9 +1516,9 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
            page->textureID);
 
     const GLuint *buffers = tt->updater.gl.buffers;
-    uint32_t streamByteOffset = tt->updater.streamByteOffset;
-    uint64_t streamByteSize = tt__BytesPerPage(tt->storage.pages.format,
-                                               tt->storage.pages.size);
+    int64_t streamByteOffset = (int64_t)tt->updater.streamByteOffset;
+    int64_t streamByteSize = tt_BytesPerPage(tt);
+    int64_t pageDataOffset = 0;
     uint8_t *pageData;
 
     if (streamByteOffset + streamByteSize > TT__UPDATER_STREAM_BUFFER_BYTE_SIZE) {
@@ -1334,16 +1541,20 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
 
-    /*for (int i = 0; i < tt_TexturesPerPage(tt); ++i)*/ {
-        glCompressedTextureSubImage3D(tt->cache.gl.textures[0],
+    for (int64_t i = 0; i < tt_TexturesPerPage(tt); ++i) {
+        GLint textureSize = 1 << tt->storage.header.textures[i].size;
+        int64_t streamOffset = streamByteOffset + pageDataOffset;
+
+        glCompressedTextureSubImage3D(tt->cache.gl.textures[i],
                                       0,
                                       0, 0, page->textureID,
-                                      1 << tt->storage.pages.size,
-                                      1 << tt->storage.pages.size,
+                                      textureSize,
+                                      textureSize,
                                       1,
-                                      tt__PageTextureInternalFormat(tt, 0),
+                                      tt__PageTextureInternalFormat(tt, i),
                                       streamByteSize,
-                                      TT__BUFFER_OFFSET(streamByteOffset));
+                                      TT__BUFFER_OFFSET(streamOffset));
+        pageDataOffset+= tt_BytesPerPageTexture(tt, i);
     }
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -1406,7 +1617,7 @@ static void tt__UpdateIndirectionBuffer(tt_Texture *tt)
             GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
         );
 
-        for (int i = 0; i < nodeCount; ++i) {
+        for (int64_t i = 0; i < nodeCount; ++i) {
             leb_Node node = leb_DecodeNode(tt->cache.leb, i);
             const tt__Page *page = tt__LoadPage(tt, node.id);
 
@@ -1450,7 +1661,7 @@ TTDEF GLuint tt_IndirectionBuffer(const tt_Texture *tt)
 
 TTDEF void tt_BindPageTextures(const tt_Texture *tt, GLenum *textureUnits)
 {
-    for (int i = 0; i < tt_TexturesPerPage(tt); ++i) {
+    for (int64_t i = 0; i < tt_TexturesPerPage(tt); ++i) {
         glActiveTexture(textureUnits[i]);
         glBindTexture(GL_TEXTURE_2D_ARRAY, tt->cache.gl.textures[i]);
     }

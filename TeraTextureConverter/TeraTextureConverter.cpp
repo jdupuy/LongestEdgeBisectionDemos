@@ -134,7 +134,7 @@ void Run(int argc, char **argv)
     //const char *pathToFile = PATH_TO_ASSET_DIRECTORY "./debug-texture.png";
     const char *pathToFile = PATH_TO_ASSET_DIRECTORY "./kloofendal_48d_partly_cloudy_16k.hdr";
     bool isHdr = strcmp(strrchr(pathToFile, '.'), ".hdr") == 0;
-    int textureRes = 12;
+    int textureRes = 16;
     int pageRes = 9;
     int texelsPerPage = 1 << (2 * pageRes);
     tt_Texture *tt;
@@ -153,7 +153,7 @@ void Run(int argc, char **argv)
 
     // create the tt_Texture file
     TT_LOG("Creating %s texture", isHdr ? "HDR" : "LDR");
-    tt_Create("texture.tt", isHdr ? TT_FORMAT_HDR : TT_FORMAT_RGB, textureRes, pageRes);
+    tt_Create("texture.tt", textureRes, pageRes, isHdr ? TT_FORMAT_BC6 : TT_FORMAT_BC1);
     tt = tt_Load("texture.tt", 256);
 
     // allocate data
@@ -169,8 +169,8 @@ void Run(int argc, char **argv)
     glViewport(0, 0, 1 << pageRes, 1 << pageRes);
     glUseProgram(program);
     glBindVertexArray(vertexArray);
-    for (int i = 0; i < (2 << tt->storage.depth); ++i) {
-        TT_LOG("Generating page %i / %i", i + 1, (2 << tt->storage.depth));
+    for (int64_t i = 0; i < (2 << tt->storage.header.depth); ++i) {
+        TT_LOG("Generating page %li / %i", i + 1, (2 << tt->storage.header.depth));
         GLenum type = isHdr ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
 
         // write to raw data
@@ -189,6 +189,8 @@ void Run(int argc, char **argv)
         fseek(tt->storage.stream, sizeof(tt__Header) + (uint64_t)bytesPerPage * (uint64_t)i, SEEK_SET);
         fwrite(pageData, bytesPerPage, 1, tt->storage.stream);
     }
+
+    TT_LOG("Wrote %f MiB to disk", (float)tt_StorageSize(tt) / (1024.f * 1024.f));
 
     // release OpenGL objects
     glDeleteTextures(TEXTURE_COUNT, textures);
