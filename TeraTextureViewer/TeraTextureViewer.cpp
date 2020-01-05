@@ -142,6 +142,7 @@ struct ViewerManager {
     struct {
         tt_Texture *tt;
         tt_UpdateArgs args;
+        int id;
     } texture;
     struct {
         struct {float x, y;} pos;
@@ -153,7 +154,7 @@ struct ViewerManager {
         int indirection, leb;
     } bufferIndex;
 } g_viewer = {
-    {NULL, {0}},
+    {NULL, {0}, 0},
     {
         {0.0f, 0.0f},
         0.0f,
@@ -246,7 +247,6 @@ void Load(int argc, char **argv)
     };
 
     g_viewer.texture.tt = tt_Load("texture.tt", /* cache size */2048);
-    //g_viewer.texture.tt = tt_Load("testHDR.tt", 2048);
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
     tt_BindPageTextures(g_viewer.texture.tt, textureUnits);
@@ -314,6 +314,8 @@ void Render()
                      g_viewer.bufferIndex.leb,
                      tt_LebBuffer(g_viewer.texture.tt));
     glUseProgram(g_gl.program);
+    glUniform1i(glGetUniformLocation(g_gl.program, "u_PageTextureID"),
+                g_viewer.texture.id);
     glBindVertexArray(g_gl.vertexArray);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
@@ -331,6 +333,7 @@ void RenderGui()
     ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH));
     ImGui::Begin("Window");
     {
+        int texturesPerPage = tt_TexturesPerPage(g_viewer.texture.tt);
         const char* eTonemaps[] = {
             "Uncharted2",
             "Filmic",
@@ -342,6 +345,12 @@ void RenderGui()
             LoadProgram();
         ImGui::Text("Pos : %f %f", g_viewer.camera.pos.x, g_viewer.camera.pos.y);
         ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
+        if (texturesPerPage > 1) {
+            const char* eTextureIDs[] = {
+                "TEX0", "TEX1", "TEX2", "TEX3", "TEX4", "TEX5", "TEX6", "TEX7"
+            };
+            ImGui::Combo("PageTextureID", &g_viewer.texture.id, &eTextureIDs[0], tt_TexturesPerPage(g_viewer.texture.tt));
+        }
         ImGui::SliderFloat("PixelPerTexel", &g_viewer.texture.args.pixelsPerTexelTarget, 0, 4);
         ImGui::Checkbox("Freeze", &g_viewer.flags.freezeTexture);
         ImGui::Text("NodeCount: %i", leb_NodeCount(g_viewer.texture.tt->cache.leb));
