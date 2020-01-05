@@ -1531,7 +1531,7 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
     pageData = (uint8_t *)glMapBufferRange(
         GL_PIXEL_UNPACK_BUFFER,
         streamByteOffset, streamByteSize,
-        GL_MAP_WRITE_BIT// | GL_MAP_UNSYNCHRONIZED_BIT // XXX: UNSYNCHRONIZED sometimes produces shitty results
+        GL_MAP_WRITE_BIT /*| GL_MAP_UNSYNCHRONIZED_BIT*/ // XXX: UNSYNCHRONIZED sometimes produces shitty results
     );
 
     fseek(tt->storage.stream,
