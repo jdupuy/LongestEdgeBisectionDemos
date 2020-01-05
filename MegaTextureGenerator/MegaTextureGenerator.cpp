@@ -70,33 +70,36 @@ enum {
 struct TextureGenerator {
     struct {
         const char *pathToFile;     // path to input displacement map
-        int resolution;             // resolution
+        float width, height;        // size in meters
         float zMin, zMax;           // min/max altitude in meters
-        float size;                 // size in meters
     } dmap;
     struct {
         const char *pathToDmap, *pathToAmap; // displacement and albedo texture maps
-        int resolution;             // texture resolution
-        float zMax;                 // max height in meters
-        float size;                 // data spatial footprint
+        float width, height;        // size in meters
+        float zMin, zMax;           // min/max altitude in meters
     } detailsMaps[DETAIL_MAP_COUNT];
-    int targetResolution;           // side resolution of the texture to generate
-    int chunkResolution;            // side resolution of each chunk textures
 } g_textureGenerator = {
-    {PATH_TO_ASSET_DIRECTORY "./kauai.png", -1, -14.0f, 1587.0f, 5266.0f},
+    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 5266.0f, 5266.0f, -14.0f, 1587.0f},
     {
         {
             PATH_TO_ASSET_DIRECTORY "./rock_05_bump_1k.png",
             PATH_TO_ASSET_DIRECTORY "./rock_05_diff_1k.png",
-            -1, 0.010f, 1.0f
+            0.010f, 0.010f, 0.0f, 1.0f
         }, {
             PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_bump_1k.png",
             PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_diff_1k.png",
-            -1, 0.010f, 4.0f
+            0.010f, 0.010f, 0.0f, 1.0f
         }
-    },
-    1024 * 1024,
-    1024
+    }
+};
+
+struct TextureViewer {
+    struct {
+        struct {float x, y;} pos;
+        float zoom;
+    } camera;
+} g_viewer = {
+    { {0.0f, 0.0f}, 1.0f }
 };
 
 enum {
@@ -115,13 +118,20 @@ enum {
 };
 
 enum {
-    PROGRAM_CHUNK_GENERATOR,
-    PROGRAM_CHUNK_PREVIEW,
+    PROGRAM_PREVIEW,
+
     PROGRAM_COUNT
+};
+
+enum {
+    BUFFER_TEXTURE_DIMENSIONS,
+
+    BUFFER_COUNT
 };
 
 struct OpenGLManager {
     GLuint vertexArray;
+    GLuint buffers[BUFFER_COUNT];
     GLuint textures[TEXTURE_COUNT];
     GLuint programs[PROGRAM_COUNT];
 } g_gl = {0, {0}, {0}};
@@ -138,7 +148,6 @@ void LoadDetailDataTextures()
         glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_ROCK + i);
         djgt_to_gl(djt, GL_TEXTURE_2D, GL_R8, true, true, glt);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        g_textureGenerator.detailsMaps[i].resolution = djt->next->x;
         djgt_release(djt);
     }
     for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
@@ -154,123 +163,85 @@ void LoadDetailDataTextures()
 }
 
 // load input displacement map
+// this also computes the second moment of the elevation
+// which we use to measure the local roughness of the terrain
 void LoadTerrainDmapTexture()
 {
     GLuint *glt = &g_gl.textures[TEXTURE_DMAP_TERRAIN];
-    djg_texture *djt = djgt_create(0);
+    djg_texture *djgt = djgt_create(0);
 
     LOG("Loading {Dmap-Terrain-Texture}\n");
-    djgt_push_image_u16(djt, g_textureGenerator.dmap.pathToFile, true);
-    glGenTextures(1, &g_gl.textures[TEXTURE_DMAP_TERRAIN]);
+    djgt_push_image_u16(djgt, g_textureGenerator.dmap.pathToFile, true);
+
+    int w = djgt->next->x;
+    int h = djgt->next->y;
+    const uint16_t *texels = (const uint16_t *)djgt->next->texels;
+    int mipcnt = djgt__mipcnt(w, h, 1);
+    std::vector<uint16_t> dmap(w * h * 2);
+
+    for (int j = 0; j < h; ++j)
+    for (int i = 0; i < w; ++i) {
+        uint16_t z = texels[i + w * j]; // in [0,2^16-1]
+        float zf = float(z) / float((1 << 16) - 1);
+        uint16_t z2 = zf * zf * ((1 << 16) - 1);
+
+        dmap[    2 * (i + w * j)] = z;
+        dmap[1 + 2 * (i + w * j)] = z2;
+    }
+
+    glGenTextures(1, glt);
     glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_TERRAIN);
-    djgt_to_gl(djt, GL_TEXTURE_2D, GL_R16, true, true, glt);
+    glBindTexture(GL_TEXTURE_2D, *glt);
+    glTexStorage2D(GL_TEXTURE_2D, mipcnt, GL_RG16, w, h);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RG, GL_UNSIGNED_SHORT, &dmap[0]);
+    glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    g_textureGenerator.dmap.resolution = djt->next->x;
-    djgt_release(djt);
-}
-
-// chunk data textures
-void LoadChunkDataTextures()
-{
-    const int textureSize = g_textureGenerator.chunkResolution;
-
-    // displacement is a 16bit single channel texture
-    LOG("Loading {Dmap-Chunk-Texture}\n");
-    glGenTextures(1, &g_gl.textures[TEXTURE_DMAP_CHUNK]);
-    glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_CHUNK);
-    glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_DMAP_CHUNK]);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R16, textureSize, textureSize);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-
-    // albedo is a compressed RGB texture
-    LOG("Loading {Amap-Chunk-Texture}\n");
-    glGenTextures(1, &g_gl.textures[TEXTURE_AMAP_CHUNK]);
-    glActiveTexture(GL_TEXTURE0 + TEXTURE_AMAP_CHUNK);
-    glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_AMAP_CHUNK]);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, textureSize, textureSize);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-
-    // normal is a compressed RG texture
-    LOG("Loading {Nmap-Chunk-Texture}\n");
-    glGenTextures(1, &g_gl.textures[TEXTURE_NMAP_CHUNK]);
-    glActiveTexture(GL_TEXTURE0 + TEXTURE_NMAP_CHUNK);
-    glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_NMAP_CHUNK]);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RG8, textureSize, textureSize);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    djgt_release(djgt);
 }
 
 void LoadTextures()
 {
     LoadDetailDataTextures();
     LoadTerrainDmapTexture();
-    LoadChunkDataTextures();
 }
 
-void LoadChunkGeneratorProgram()
+void LoadPreviewProgram()
 {
-    LOG("Loading Chunk-Generator-Program");
+    LOG("Loading Preview-Program");
     djg_program *djp = djgp_create();
-    GLuint *glp = &g_gl.programs[PROGRAM_CHUNK_GENERATOR];
+    GLuint *glp = &g_gl.programs[PROGRAM_PREVIEW];
     char buf[1024];
 
+    djgp_push_string(djp,
+                     "#define WORLD_SPACE_TEXTURE_DIMENSIONS_BUFFER_BINDING %i\n",
+                     BUFFER_TEXTURE_DIMENSIONS);
     djgp_push_file(djp, PATH_TO_NOISE_GLSL_LIBRARY "gpu_noise_lib.glsl");
-    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "ChunkGenerator.glsl"));
+    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainTexture.glsl"));
+    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainPreview.glsl"));
     djgp_to_gl(djp, 450, false, true, glp);
 
     glUseProgram(*glp);
-    glUniform1i(glGetUniformLocation(*glp, "u_ChunkDmapSampler"), TEXTURE_DMAP_CHUNK);
-    glUniform1i(glGetUniformLocation(*glp, "u_ChunkAmapSampler"), TEXTURE_AMAP_CHUNK);
-    glUniform1i(glGetUniformLocation(*glp, "u_ChunkNmapSampler"), TEXTURE_NMAP_CHUNK);
-    glUniform1i(glGetUniformLocation(*glp, "u_RockDmapSampler"), TEXTURE_DMAP_ROCK);
-    glUniform1i(glGetUniformLocation(*glp, "u_RockAmapSampler"), TEXTURE_AMAP_ROCK);
-    glUniform1i(glGetUniformLocation(*glp, "u_GrassDmapSampler"), TEXTURE_DMAP_GRASS);
-    glUniform1i(glGetUniformLocation(*glp, "u_GrassAmapSampler"), TEXTURE_AMAP_GRASS);
-    glUniform1i(glGetUniformLocation(*glp, "u_TerrainDmapSampler"), TEXTURE_DMAP_TERRAIN);
-
-    glUniform1i(glGetUniformLocation(*glp, "u_TerrainDmapResolution"),
-                g_textureGenerator.dmap.resolution);
-    glUniform2f(glGetUniformLocation(*glp, "u_TerrainDmapZminZmax"),
-                g_textureGenerator.dmap.zMin, g_textureGenerator.dmap.zMax);
-    glUniform1f(glGetUniformLocation(*glp, "u_TerrainDmapSize"),
-                g_textureGenerator.dmap.size);
-
-    glUniform1i(glGetUniformLocation(g_gl.programs[PROGRAM_CHUNK_GENERATOR],
-                                     "u_ChunkResolution"),
-                g_textureGenerator.chunkResolution);
-    glUniform1i(glGetUniformLocation(*glp, "u_MegaTextureResolution"),
-                g_textureGenerator.targetResolution);
-
-    // frequencies
-    glUniform1f(glGetUniformLocation(*glp, "u_GrassFrequency"),
-                g_textureGenerator.dmap.size /
-                g_textureGenerator.detailsMaps[DETAIL_MAP_GRASS].size);
-    glUniform1f(glGetUniformLocation(*glp, "u_RockFrequency"),
-                g_textureGenerator.dmap.size /
-                g_textureGenerator.detailsMaps[DETAIL_MAP_ROCK].size);
-
-    glUseProgram(0);
-
-    djgp_release(djp);
-}
-
-void LoadChunkPreviewProgram()
-{
-    LOG("Loading Chunk-Preview-Program");
-    djg_program *djp = djgp_create();
-    GLuint *glp = &g_gl.programs[PROGRAM_CHUNK_PREVIEW];
-    char buf[1024];
-
-    djgp_push_file(djp, PATH_TO_NOISE_GLSL_LIBRARY "gpu_noise_lib.glsl");
-    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "ChunkPreview.glsl"));
-    djgp_to_gl(djp, 450, false, true, glp);
-
-    glUseProgram(*glp);
-    glUniform1i(glGetUniformLocation(*glp, "u_ChunkDmapSampler"), TEXTURE_DMAP_CHUNK);
-    glUniform1i(glGetUniformLocation(*glp, "u_ChunkAmapSampler"), TEXTURE_AMAP_CHUNK);
-    glUniform1i(glGetUniformLocation(*glp, "u_ChunkNmapSampler"), TEXTURE_NMAP_CHUNK);
+    {
+        GLint albedoLocations[] = {
+            TEXTURE_AMAP_GRASS,
+            TEXTURE_AMAP_ROCK
+        };
+        GLint displacementLocations[] = {
+            TEXTURE_DMAP_GRASS,
+            TEXTURE_DMAP_ROCK
+        };
+        glUniform1i(glGetUniformLocation(*glp, "TT_TerrainDisplacementSampler"),
+                    TEXTURE_DMAP_TERRAIN);
+        glUniform1iv(glGetUniformLocation(*glp, "TT_DetailAlbedoSamplers"),
+                     DETAIL_MAP_COUNT,
+                     albedoLocations);
+        glUniform1iv(glGetUniformLocation(*glp, "TT_DetailDisplacementSamplers"),
+                     DETAIL_MAP_COUNT,
+                     displacementLocations);
+    }
     glUseProgram(0);
 
     djgp_release(djp);
@@ -278,8 +249,7 @@ void LoadChunkPreviewProgram()
 
 void LoadPrograms()
 {
-    LoadChunkGeneratorProgram();
-    LoadChunkPreviewProgram();
+    LoadPreviewProgram();
 }
 
 void LoadVertexArray()
@@ -289,6 +259,32 @@ void LoadVertexArray()
     glBindVertexArray(0);
 }
 
+void LoadTextureDimensionsBuffer()
+{
+    dja::vec4 bufferData[8];
+    glGenBuffers(1, &g_gl.buffers[BUFFER_TEXTURE_DIMENSIONS]);
+
+    bufferData[0].x = g_textureGenerator.dmap.width;
+    bufferData[0].y = g_textureGenerator.dmap.height;
+    bufferData[0].z = g_textureGenerator.dmap.zMin;
+    bufferData[0].w = g_textureGenerator.dmap.zMax;
+
+    for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
+        bufferData[i + 1].x = g_textureGenerator.detailsMaps[i].width;
+        bufferData[i + 1].y = g_textureGenerator.detailsMaps[i].height;
+        bufferData[i + 1].z = g_textureGenerator.detailsMaps[i].zMin;
+        bufferData[i + 1].w = g_textureGenerator.detailsMaps[i].zMax;
+    }
+
+    glBindBuffer(GL_UNIFORM_BUFFER, g_gl.buffers[BUFFER_TEXTURE_DIMENSIONS]);
+    glBufferStorage(GL_UNIFORM_BUFFER, sizeof(bufferData), bufferData, 0);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    glBindBufferBase(GL_UNIFORM_BUFFER,
+                     BUFFER_TEXTURE_DIMENSIONS,
+                     g_gl.buffers[BUFFER_TEXTURE_DIMENSIONS]);
+}
+
+
 // -----------------------------------------------------------------------------
 // allocate resources
 // (typically before entering the game loop)
@@ -297,6 +293,7 @@ void Load(int /*argc*/, char **/*argv*/)
     LoadTextures();
     LoadVertexArray();
     LoadPrograms();
+    LoadTextureDimensionsBuffer();
 }
 
 // free resources
@@ -306,60 +303,26 @@ void Release()
 }
 
 // -----------------------------------------------------------------------------
-void GenerateChunk(int x, int y, int zoom)
+void Render()
 {
-    int globalSize = g_textureGenerator.chunkResolution;
-    int localSize = 32;
-    int numGroup = globalSize / localSize;
-    int mag = 1 << zoom;
+    float zoomFactor = exp2f(-g_viewer.camera.zoom);
+    float x = g_viewer.camera.pos.x;
+    float y = g_viewer.camera.pos.y;
+    dja::mat4 modelView = dja::mat4::homogeneous::orthographic(
+        x - zoomFactor + 0.5f, x + zoomFactor + 0.5f,
+        y - zoomFactor + 0.5f, y + zoomFactor + 0.5f,
+        -1.0f, 1.0f
+    );
+    dja::mat4 projection = dja::mat4(1.0f);
+    dja::mat4 mvp = dja::transpose(projection * modelView);
 
-    LoadChunkGeneratorProgram();
-    glBindImageTexture(TEXTURE_DMAP_CHUNK,
-                       g_gl.textures[TEXTURE_DMAP_CHUNK],
-                       0,
-                       GL_FALSE,
-                       0,
-                       GL_WRITE_ONLY,
-                       GL_R16);
-    glBindImageTexture(TEXTURE_AMAP_CHUNK,
-                       g_gl.textures[TEXTURE_AMAP_CHUNK],
-                       0,
-                       GL_FALSE,
-                       0,
-                       GL_WRITE_ONLY,
-                       GL_RGBA8);
-    glBindImageTexture(TEXTURE_NMAP_CHUNK,
-                       g_gl.textures[TEXTURE_NMAP_CHUNK],
-                       0,
-                       GL_FALSE,
-                       0,
-                       GL_WRITE_ONLY,
-                       GL_RG8);
-
-    glUseProgram(g_gl.programs[PROGRAM_CHUNK_GENERATOR]);
-
-    glUniform1i(glGetUniformLocation(g_gl.programs[PROGRAM_CHUNK_GENERATOR],
-                                     "u_ChunkZoomFactor"),
-                g_textureGenerator.targetResolution / (mag * g_textureGenerator.chunkResolution));
-    glUniform2i(glGetUniformLocation(g_gl.programs[PROGRAM_CHUNK_GENERATOR],
-                                     "u_ChunkCoordinate"),
-                x * g_textureGenerator.targetResolution / mag,
-                y * g_textureGenerator.targetResolution / mag);
-
-    glDispatchCompute(numGroup, numGroup, 1);
-    glUseProgram(0);
-
-    glBindImageTexture(TEXTURE_DMAP_CHUNK, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R16);
-    glBindImageTexture(TEXTURE_AMAP_CHUNK, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-    glBindImageTexture(TEXTURE_NMAP_CHUNK, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RG8);
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
-}
-
-// -----------------------------------------------------------------------------
-void RenderChunk()
-{
     glViewport(256, 0, VIEWPORT_WIDTH, VIEWPORT_WIDTH);
-    glUseProgram(g_gl.programs[PROGRAM_CHUNK_PREVIEW]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(g_gl.programs[PROGRAM_PREVIEW]);
+    glUniformMatrix4fv(
+        glGetUniformLocation(g_gl.programs[PROGRAM_PREVIEW], "u_ModelViewProjection"),
+        1, GL_FALSE, &mvp[0][0]
+    );
     glBindVertexArray(g_gl.vertexArray);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
@@ -376,22 +339,8 @@ void RenderGui()
     ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH)/*, ImGuiSetCond_FirstUseEver*/);
     ImGui::Begin("Window");
     {
-        int chunkToTargetRatio = g_textureGenerator.targetResolution
-                               / g_textureGenerator.chunkResolution;
-        static int zoom = 0;
-        static int x = 0, y = 0;
-        if (ImGui::Button("GenerateChunk")) {
-            GenerateChunk(x, y, zoom);
-        }
-        if (ImGui::SliderInt("Zoom", &zoom, 0, 10)) {
-            GenerateChunk(x, y, zoom);
-        }
-        if (ImGui::SliderInt("XPos", &x, 0, (1 << zoom) - 1)) {
-            GenerateChunk(x, y, zoom);
-        }
-        if (ImGui::SliderInt("YPos", &y, 0, (1 << zoom) - 1)) {
-            GenerateChunk(x, y, zoom);
-        }
+        ImGui::Text("Pos : %f %f", g_viewer.camera.pos.x, g_viewer.camera.pos.y);
+        ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
     }
     ImGui::End();
 
@@ -430,13 +379,26 @@ MouseButtonCallback(GLFWwindow* /*window*/, int /*button*/, int /*action*/, int 
         return;
 }
 
-void MouseMotionCallback(GLFWwindow* /*window*/, double x, double y)
+void MouseMotionCallback(GLFWwindow* window, double x, double y)
 {
     static double x0 = 0, y0 = 0;
 
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse)
         return;
+
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+        float sc = exp2f(-g_viewer.camera.zoom);
+        float dx = x - x0, dy = y - y0;
+
+        g_viewer.camera.pos.x-= dx * sc * 2e-3;
+        g_viewer.camera.pos.y+= dy * sc * 2e-3;
+    } else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+        g_viewer.camera.zoom+= (x - x0) * 1e-2;
+
+        if (g_viewer.camera.zoom < -1.0f)
+            g_viewer.camera.zoom = -1.0f;
+    }
 
     x0 = x;
     y0 = y;
@@ -548,7 +510,7 @@ int main(int argc, char **argv)
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
-            RenderChunk();
+            Render();
             RenderGui();
 
             glfwSwapBuffers(window);

@@ -1,3 +1,8 @@
+
+
+
+
+
 // chunk data
 uniform ivec2 u_ChunkCoordinate;
 uniform int u_ChunkZoomFactor;
