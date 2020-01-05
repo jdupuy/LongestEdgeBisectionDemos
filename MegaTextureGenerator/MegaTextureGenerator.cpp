@@ -83,12 +83,12 @@ struct TextureGenerator {
     {
         {
             PATH_TO_ASSET_DIRECTORY "./rock_05_bump_1k.png",
-            PATH_TO_ASSET_DIRECTORY "./rock_05_diff_1k.png",
-            0.010f, 0.010f, 0.0f, 1.0f
+            PATH_TO_ASSET_DIRECTORY "./ROCK-11_COLOR_4k.jpg",
+            10.0f, 10.0f, 0.0f, 1.0f
         }, {
             PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_bump_1k.png",
-            PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_diff_1k.png",
-            0.010f, 0.010f, 0.0f, 1.0f
+            PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_COLOR_4k.jpg",
+            3.0f, 3.0f, 0.0f, 1.0f
         }
     }
 };

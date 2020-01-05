@@ -165,17 +165,17 @@ TT_Texel TT_TextureFetch(vec2 u)
     // Add details maps
     float slopeMag = dot(texel.slope, texel.slope);
     float roughness = TT__TerrainRoughness(u, 25.0f);
-    if (slopeMag > 3.0f+ SimplexPerlin2D(u * 86254.0f) * 0.5f)
+    if (slopeMag > 1.0f + SimplexPerlin2D(u * 86254.0f) * 0.5f)
         texel.albedo = texture(
             TT_DetailAlbedoSamplers[1],
-            0.0125 * u * TT_WorldSpaceTextureDimensions[0].width /
+            u * TT_WorldSpaceTextureDimensions[0].width /
                 TT_WorldSpaceTextureDimensions[2].width ).rgb;
     else if (roughness > 0.01f)
         texel.albedo = vec3(0.5, 0.0, 1.0);
     else
         texel.albedo = texture(
             TT_DetailAlbedoSamplers[0],
-            0.0125 * u * TT_WorldSpaceTextureDimensions[0].width /
+            u * TT_WorldSpaceTextureDimensions[0].width /
                 TT_WorldSpaceTextureDimensions[1].width ).rgb;
 
     return texel;
