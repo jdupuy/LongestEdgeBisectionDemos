@@ -62,8 +62,9 @@ struct AppManager {
 };
 
 enum {
-    DETAIL_MAP_ROCK,
+    DETAIL_MAP_SAND,
     DETAIL_MAP_GRASS,
+    DETAIL_MAP_ROCK,
     DETAIL_MAP_COUNT
 };
 
@@ -82,14 +83,18 @@ struct TextureGenerator {
     {PATH_TO_ASSET_DIRECTORY "./kauai.png", 5266.0f, 5266.0f, -14.0f, 1587.0f},
     {
         {
-            PATH_TO_ASSET_DIRECTORY "./rock_05_bump_1k.png",
-            PATH_TO_ASSET_DIRECTORY "./ROCK-11_COLOR_4k.jpg",
-            10.0f, 10.0f, 0.0f, 1.0f
+            PATH_TO_ASSET_DIRECTORY "./sand_01_bump_4k.jpg",
+            PATH_TO_ASSET_DIRECTORY "./sand_01_diff_4k.jpg",
+            3.0f, 3.0f, 0.0f, 0.00f
         }, {
-            PATH_TO_ASSET_DIRECTORY "./brown_mud_leaves_01_bump_1k.png",
+            PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_BUMP_4k.jpg",
             PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_COLOR_4k.jpg",
-            3.0f, 3.0f, 0.0f, 1.0f
-        }
+            3.0f, 3.0f, 0.0f, 0.05f
+        }, {
+            PATH_TO_ASSET_DIRECTORY "./ROCK-13_BUMP_4k.jpg",
+            PATH_TO_ASSET_DIRECTORY "./ROCK-13_COLOR_4k.jpg",
+            3.0f, 3.0f, 0.0f, 0.7f
+        },
     }
 };
 
@@ -105,14 +110,12 @@ struct TextureViewer {
 enum {
     TEXTURE_DMAP_TERRAIN,
 
-    TEXTURE_DMAP_ROCK,
+    TEXTURE_DMAP_SAND,
     TEXTURE_DMAP_GRASS,
-    TEXTURE_AMAP_ROCK,
+    TEXTURE_DMAP_ROCK,
+    TEXTURE_AMAP_SAND,
     TEXTURE_AMAP_GRASS,
-
-    TEXTURE_DMAP_CHUNK,
-    TEXTURE_AMAP_CHUNK,
-    TEXTURE_NMAP_CHUNK,
+    TEXTURE_AMAP_ROCK,
 
     TEXTURE_COUNT
 };
@@ -142,20 +145,20 @@ void LoadDetailDataTextures()
     glGenTextures(DETAIL_MAP_COUNT, &g_gl.textures[TEXTURE_DMAP_ROCK]);
     for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
         LOG("Loading {Dmap-Detail-Texture}\n");
-        GLuint *glt = &g_gl.textures[TEXTURE_DMAP_ROCK + i];
+        GLuint *glt = &g_gl.textures[TEXTURE_DMAP_SAND + i];
         djg_texture *djt = djgt_create(0);
         djgt_push_image_u8(djt, g_textureGenerator.detailsMaps[i].pathToDmap, true);
-        glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_ROCK + i);
+        glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_SAND + i);
         djgt_to_gl(djt, GL_TEXTURE_2D, GL_R8, true, true, glt);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         djgt_release(djt);
     }
     for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
         LOG("Loading {Amap-Detail-Texture}\n");
-        GLuint *glt = &g_gl.textures[TEXTURE_AMAP_ROCK + i];
+        GLuint *glt = &g_gl.textures[TEXTURE_AMAP_SAND + i];
         djg_texture *djt = djgt_create(0);
         djgt_push_image_u8(djt, g_textureGenerator.detailsMaps[i].pathToAmap, true);
-        glActiveTexture(GL_TEXTURE0 + TEXTURE_AMAP_ROCK + i);
+        glActiveTexture(GL_TEXTURE0 + TEXTURE_AMAP_SAND + i);
         djgt_to_gl(djt, GL_TEXTURE_2D, GL_RGBA8, true, true, glt);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         djgt_release(djt);
@@ -226,10 +229,12 @@ void LoadPreviewProgram()
     glUseProgram(*glp);
     {
         GLint albedoLocations[] = {
+            TEXTURE_AMAP_SAND,
             TEXTURE_AMAP_GRASS,
             TEXTURE_AMAP_ROCK
         };
         GLint displacementLocations[] = {
+            TEXTURE_DMAP_SAND,
             TEXTURE_DMAP_GRASS,
             TEXTURE_DMAP_ROCK
         };
@@ -300,6 +305,11 @@ void Load(int /*argc*/, char **/*argv*/)
 // (typically after exiting the game loop but before context deletion)
 void Release()
 {
+    glDeleteTextures(TEXTURE_COUNT, g_gl.textures);
+    glDeleteBuffers(BUFFER_COUNT, g_gl.buffers);
+    for (int i = 0; i < PROGRAM_COUNT; ++i)
+        glDeleteProgram(g_gl.programs[i]);
+    glDeleteVertexArrays(1, &g_gl.vertexArray);
 }
 
 // -----------------------------------------------------------------------------
@@ -347,6 +357,87 @@ void RenderGui()
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
+
+// -----------------------------------------------------------------------------
+enum {
+    TEXTURE_EXPORT_PAGE_ALBEDO_RAW,
+    TEXTURE_EXPORT_PAGE_NORMAL_RAW,
+    TEXTURE_EXPORT_PAGE_ALBEDO,
+    TEXTURE_EXPORT_PAGE_NORMAL,
+    TEXTURE_EXPORT_PAGE_DISPLACEMENT,
+
+    TEXTURE_EXPORT_COUNT
+};
+
+GLuint LoadPageAlbedoTexture(int size)
+{
+    GLuint texture;
+
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_EXPORT_PAGE_ALBEDO);
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_COMPRESSED_RGB_S3TC_DXT1_EXT, size, size);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    return texture;
+}
+
+#if 0
+GLuint LoadPageTextureRaw(int size, bool isHdr)
+{
+    GLuint texture;
+    GLenum internalFormat = isHdr ? GL_RGBA16F : GL_RGBA8;
+
+    glActiveTexture(GL_TEXTURE0 + EXPORT_TEXTURE_PAGE_RAW_ALBEDO);
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, size, size);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glActiveTexture(GL_TEXTURE0);
+
+    return texture;
+}
+#endif
+
+GLuint LoadFramebuffer(GLuint pageTextureRaw)
+{
+    GLuint framebuffer;
+
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D,
+                           pageTextureRaw,
+                           0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    return framebuffer;
+}
+
+GLuint LoadGenerationProgram(bool isHdr)
+{
+    djg_program *djgp = djgp_create();
+    GLuint program;
+
+    djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
+    djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/TextureGeneration.glsl");
+    djgp_to_gl(djgp, 450, false, true, &program);
+    djgp_release(djgp);
+
+    return program;
+}
+
+void ExportTexture()
+{
+    // TODO
+}
+
 
 // -----------------------------------------------------------------------------
 void
@@ -497,45 +588,28 @@ int main(int argc, char **argv)
     }
 
     LOG("-- Begin -- Demo\n");
-    try {
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO(); (void)io;
-        ImGui::StyleColorsDark();
-        ImGui_ImplGlfw_InitForOpenGL(window, false);
-        ImGui_ImplOpenGL3_Init("#version 450");
-        log_debug_output();
-        Load(argc, argv);
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, false);
+    ImGui_ImplOpenGL3_Init("#version 450");
+    log_debug_output();
+    Load(argc, argv);
 
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
 
-            Render();
-            RenderGui();
+        Render();
+        RenderGui();
 
-            glfwSwapBuffers(window);
-        }
-
-        Release();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwTerminate();
-    } catch (std::exception& e) {
-        LOG("%s", e.what());
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwTerminate();
-        LOG("(!) Demo Killed (!)\n");
-
-        return EXIT_FAILURE;
-    } catch (...) {
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwTerminate();
-        LOG("(!) Demo Killed (!)\n");
-
-        return EXIT_FAILURE;
+        glfwSwapBuffers(window);
     }
+
+    Release();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    glfwTerminate();
     LOG("-- End -- Demo\n");
 
     return 0;

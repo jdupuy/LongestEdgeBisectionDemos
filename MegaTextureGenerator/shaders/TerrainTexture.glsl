@@ -1,7 +1,6 @@
 /*
-    This API is responsible for building a texture for a
-    16km x 16km terrain using detail maps that have sub-millimetric
-    resolution. The detail maps are applied onto a coarse displacement
+    This API is responsible for building a texture for a terrain using
+    detail maps. The detail maps are applied onto a coarse displacement
     map. Each detail map is applied depending on the local properties
     of the coarse displacement. Specifically, we use altitude, slope,
     and roughness over arbitrary footprints. We apply three types of
@@ -10,7 +9,7 @@
  */
 
 struct TT_Texel {
-    float displacement;
+    float altitude;
     vec2 slope;
     vec3 albedo;
 };
@@ -22,8 +21,8 @@ TT_Texel TT_LookupGrad(vec2 u, vec2 dudx, vec2 dudy);
 
 #define TEXTURE_TERRAIN 0
 #define TEXTURE_SAND    1
-#define TEXTURE_ROCK    2
-#define TEXTURE_GRASS   3
+#define TEXTURE_GRASS   2
+#define TEXTURE_ROCK    3
 #define TEXTURE_COUNT   4
 
 struct TT__TextureDimensions {
@@ -105,7 +104,7 @@ vec4 TT__TextureCubic(sampler2D sampler, vec2 P)
 void
 TT__ReMapDisplacementData(
     in const TT__TextureDimensions textureDimensions,
-    inout float displacement,
+    inout float altitude,
     inout vec2 slope
 ) {
     float width  = textureDimensions.width;
@@ -114,7 +113,7 @@ TT__ReMapDisplacementData(
     float zMax = textureDimensions.zMax;
     float scale = zMax - zMin;
 
-    displacement = displacement * scale + zMin;
+    altitude = altitude * scale + zMin;
     slope.x*= scale / width;
     slope.y*= scale / height;
 }
@@ -128,18 +127,47 @@ TT_Texel TT__TextureFetch_Terrain(vec2 u)
     float y1 = TT__TextureCubic(TT_TerrainDisplacementSampler, u - vec2(0, eps.y)).r;
     float y2 = TT__TextureCubic(TT_TerrainDisplacementSampler, u + vec2(0, eps.y)).r;
 
-    texel.displacement = TT__TextureCubic(TT_TerrainDisplacementSampler, u).r;
+    texel.altitude = TT__TextureCubic(TT_TerrainDisplacementSampler, u).r;
     texel.slope.x = 0.5f * (x2 - x1) / eps.x;
     texel.slope.y = 0.5f * (y2 - y1) / eps.y;
     texel.albedo = vec3(0.0f);
 
     TT__ReMapDisplacementData(TT_WorldSpaceTextureDimensions[TEXTURE_TERRAIN],
-                              texel.displacement, texel.slope);
+                              texel.altitude, texel.slope);
 
     return texel;
 }
 
-// footprintradius in worldspace
+// lookup detail texture map
+TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
+{
+    TT__TextureDimensions terrainDimensions =
+            TT_WorldSpaceTextureDimensions[TEXTURE_TERRAIN];
+    TT__TextureDimensions detailDimensions =
+            TT_WorldSpaceTextureDimensions[textureID];
+    vec2 sc = vec2(terrainDimensions.width / detailDimensions.width,
+                   terrainDimensions.height / detailDimensions.height);
+    int samplerID = textureID - 1;
+    vec2 P = sc * u;
+    vec2 eps = 1.0f / vec2(textureSize(TT_DetailDisplacementSamplers[samplerID], 0));
+    float x1 = texture(TT_DetailDisplacementSamplers[samplerID], P - vec2(eps.x, 0)).r;
+    float x2 = texture(TT_DetailDisplacementSamplers[samplerID], P + vec2(eps.x, 0)).r;
+    float y1 = texture(TT_DetailDisplacementSamplers[samplerID], P - vec2(0, eps.y)).r;
+    float y2 = texture(TT_DetailDisplacementSamplers[samplerID], P + vec2(0, eps.y)).r;
+    TT_Texel texel;
+
+    texel.altitude = texture(TT_DetailDisplacementSamplers[samplerID], P).r;
+    texel.slope.x = 0.5f * (x2 - x1) / eps.x;
+    texel.slope.y = 0.5f * (y2 - y1) / eps.y;
+    texel.albedo = texture(TT_DetailAlbedoSamplers[samplerID], P).rgb;
+
+    TT__ReMapDisplacementData(TT_WorldSpaceTextureDimensions[textureID],
+                              texel.altitude, texel.slope);
+
+    return texel;
+}
+
+// (footprintradius in worldspace)
 float TT__TerrainRoughness(vec2 u, float footprintRadius)
 {
     TT__TextureDimensions textureDimensions =
@@ -156,6 +184,79 @@ float TT__TerrainRoughness(vec2 u, float footprintRadius)
     return scale * sqrt(max(1e-8f, Ez.y - Ez.x * Ez.x));
 }
 
+float TT__FractalBrownianMotion(vec2 u)
+{
+    float fbm = 0.0f;
+    float octaveBegin = 0;
+    float octaveEnd   = 15;
+    float bound = exp2(-octaveBegin) - exp2(-octaveEnd);
+
+    for (float octave = octaveBegin; octave < octaveEnd; ++octave) {
+        float sc = exp2(octave);
+
+        fbm+= SimplexPerlin2D(u * sc) / sc;
+    }
+
+    return fbm / bound * 0.5f + 0.5f;
+}
+
+float TT__SimplexNoise(vec2 u)
+{
+    return SimplexPerlin2D(u) * 0.5f + 0.5f;
+}
+
+#define WATER_LEVEL     0.0f
+#define SAND_LEVEL      15.0f
+
+void TT_AddWater(vec2 u, inout TT_Texel texel)
+{
+    float urng = TT__FractalBrownianMotion(u * 1e4) + 0.5;
+
+    if (texel.altitude - urng <= WATER_LEVEL) {
+        texel.albedo = vec3(0, 0, 1);
+    }
+}
+
+void TT_AddSand(vec2 u, inout TT_Texel texel)
+{
+    float urng = TT__FractalBrownianMotion(u * 1e4);
+
+    if (texel.altitude < SAND_LEVEL + urng) {
+        TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_SAND, u);
+
+        texel.altitude+= tmp.altitude;
+        texel.slope+= tmp.slope;
+        texel.albedo = tmp.albedo;
+    }
+}
+
+void TT_AddGrass(vec2 u, inout TT_Texel texel)
+{
+    float slopeSqr = dot(texel.slope, texel.slope);
+    float urng = TT__FractalBrownianMotion(u * 1e4);
+
+    if (slopeSqr <= 4.0f + urng && texel.altitude >= SAND_LEVEL + urng) {
+        TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_GRASS, u);
+
+        texel.altitude+= tmp.altitude;
+        texel.slope+= tmp.slope;
+        texel.albedo = tmp.albedo;
+    }
+}
+
+void TT_AddRock(vec2 u, inout TT_Texel texel)
+{
+    float slopeSqr = dot(texel.slope, texel.slope);
+    float urng = TT__FractalBrownianMotion(u * 1e4);
+
+    if (slopeSqr > 4.0f + urng && texel.altitude >= SAND_LEVEL + urng) {
+        TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_ROCK, u);
+
+        texel.altitude+= tmp.altitude;
+        texel.slope+= tmp.slope;
+        texel.albedo = 1.5 * tmp.albedo;
+    }
+}
 
 TT_Texel TT_TextureFetch(vec2 u)
 {
@@ -163,6 +264,12 @@ TT_Texel TT_TextureFetch(vec2 u)
     TT_Texel texel = TT__TextureFetch_Terrain(u);
 
     // Add details maps
+    texel.albedo = vec3(0, 1, 1);
+    TT_AddRock(u, texel);
+    TT_AddGrass(u, texel);
+    TT_AddSand(u, texel);
+    TT_AddWater(u, texel);
+/*
     float slopeMag = dot(texel.slope, texel.slope);
     float roughness = TT__TerrainRoughness(u, 25.0f);
     if (slopeMag > 1.0f + SimplexPerlin2D(u * 86254.0f) * 0.5f)
@@ -171,12 +278,10 @@ TT_Texel TT_TextureFetch(vec2 u)
             u * TT_WorldSpaceTextureDimensions[0].width /
                 TT_WorldSpaceTextureDimensions[2].width ).rgb;
     else if (roughness > 0.01f)
-        texel.albedo = vec3(0.5, 0.0, 1.0);
-    else
         texel.albedo = texture(
             TT_DetailAlbedoSamplers[0],
             u * TT_WorldSpaceTextureDimensions[0].width /
                 TT_WorldSpaceTextureDimensions[1].width ).rgb;
-
+*/
     return texel;
 }
