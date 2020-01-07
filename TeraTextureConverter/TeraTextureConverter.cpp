@@ -53,13 +53,11 @@ GLuint LoadInputTexture(const char *pathToFile, bool isHdr)
     return gl;
 }
 
-GLuint LoadPageTexture(int size, bool isHdr)
+GLuint LoadTexture(int textureID, GLenum internalFormat, int size)
 {
     GLuint texture;
-    GLenum internalFormat = isHdr ? GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT
-                                : GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
 
-    glActiveTexture(GL_TEXTURE0 + TEXTURE_PAGE);
+    glActiveTexture(GL_TEXTURE0 + textureID);
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, size, size);
@@ -71,21 +69,19 @@ GLuint LoadPageTexture(int size, bool isHdr)
     return texture;
 }
 
+GLuint LoadPageTexture(int size, bool isHdr)
+{
+    GLenum internalFormat = isHdr ? GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT
+                                : GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
+
+    return LoadTexture(TEXTURE_PAGE, internalFormat, size);
+}
+
 GLuint LoadPageTextureRaw(int size, bool isHdr)
 {
-    GLuint texture;
     GLenum internalFormat = isHdr ? GL_RGBA16F : GL_RGBA8;
 
-    glActiveTexture(GL_TEXTURE0 + TEXTURE_PAGE_RAW);
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, size, size);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glActiveTexture(GL_TEXTURE0);
-
-    return texture;
+    return LoadTexture(TEXTURE_PAGE_RAW, internalFormat, size);
 }
 
 GLuint LoadFramebuffer(GLuint pageTextureRaw)
@@ -105,7 +101,7 @@ GLuint LoadFramebuffer(GLuint pageTextureRaw)
     return framebuffer;
 }
 
-GLuint LoadGenerationProgram(bool isHdr)
+GLuint LoadGenerationProgram()
 {
     djg_program *djgp = djgp_create();
     GLuint program;
@@ -134,7 +130,7 @@ void Run(int argc, char **argv)
     //const char *pathToFile = PATH_TO_ASSET_DIRECTORY "./debug-texture.png";
     const char *pathToFile = PATH_TO_ASSET_DIRECTORY "./kloofendal_48d_partly_cloudy_16k.hdr";
     bool isHdr = strcmp(strrchr(pathToFile, '.'), ".hdr") == 0;
-    int textureRes = 16;
+    int textureRes = 11;
     int pageRes = 9;
     int texelsPerPage = 1 << (2 * pageRes);
     tt_Texture *tt;
@@ -149,7 +145,7 @@ void Run(int argc, char **argv)
     textures[TEXTURE_PAGE_RAW] = LoadPageTextureRaw(1 << pageRes, isHdr);
     framebuffer = LoadFramebuffer(textures[TEXTURE_PAGE_RAW]);
     vertexArray = LoadVertexArray();
-    program = LoadGenerationProgram(false);
+    program = LoadGenerationProgram();
 
     // create the tt_Texture file
     TT_LOG("Creating %s texture", isHdr ? "HDR" : "LDR");
