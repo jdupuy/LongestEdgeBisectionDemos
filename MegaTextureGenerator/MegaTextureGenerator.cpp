@@ -7,6 +7,13 @@
 #include "imgui.h"
 #include "imgui_impl.h"
 
+
+#define TT_IMPLEMENTATION
+#include "TeraTexture.h"
+
+#define LEB_IMPLEMENTATION
+#include "LongestEdgeBisection.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -22,9 +29,6 @@
 #include <stdexcept>
 #include <vector>
 #include <array>
-
-#define LEB_IMPLEMENTATION
-#include "LongestEdgeBisection.h"
 
 #define VIEWPORT_WIDTH 1200
 
@@ -43,6 +47,7 @@
 #endif
 
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
+#define BUFFER_SIZE(x)  sizeof(x) / sizeof(x[0]);
 
 char *strcat2(char *dst, const char *src1, const char *src2)
 {
@@ -213,7 +218,7 @@ void LoadTextures()
 
 void LoadPreviewProgram()
 {
-    LOG("Loading Preview-Program");
+    LOG("Loading {Preview-Program}\n");
     djg_program *djp = djgp_create();
     GLuint *glp = &g_gl.programs[PROGRAM_PREVIEW];
     char buf[1024];
@@ -340,6 +345,8 @@ void Render()
 }
 
 // -----------------------------------------------------------------------------
+void ExportTexture();
+
 void RenderGui()
 {
     ImGui_ImplOpenGL3_NewFrame();
@@ -351,6 +358,9 @@ void RenderGui()
     {
         ImGui::Text("Pos : %f %f", g_viewer.camera.pos.x, g_viewer.camera.pos.y);
         ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
+        if (ImGui::Button("Generate")) {
+            ExportTexture();
+        }
     }
     ImGui::End();
 
@@ -369,31 +379,14 @@ enum {
     TEXTURE_EXPORT_COUNT
 };
 
-GLuint LoadPageAlbedoTexture(int size)
+GLuint LoadExportTexture(int textureID, GLenum internalformat, int size)
 {
     GLuint texture;
 
-    glActiveTexture(GL_TEXTURE0 + TEXTURE_EXPORT_PAGE_ALBEDO);
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_COUNT + textureID);
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_COMPRESSED_RGB_S3TC_DXT1_EXT, size, size);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    return texture;
-}
-
-#if 0
-GLuint LoadPageTextureRaw(int size, bool isHdr)
-{
-    GLuint texture;
-    GLenum internalFormat = isHdr ? GL_RGBA16F : GL_RGBA8;
-
-    glActiveTexture(GL_TEXTURE0 + EXPORT_TEXTURE_PAGE_RAW_ALBEDO);
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, size, size);
+    glTexStorage2D(GL_TEXTURE_2D, 1, internalformat, size, size);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -401,41 +394,225 @@ GLuint LoadPageTextureRaw(int size, bool isHdr)
 
     return texture;
 }
-#endif
 
-GLuint LoadFramebuffer(GLuint pageTextureRaw)
+GLuint LoadFramebuffer(GLuint albedo, GLuint displacement, GLuint normal)
 {
     GLuint framebuffer;
+    const GLenum drawBuffers[] = {
+        GL_COLOR_ATTACHMENT0,
+        GL_COLOR_ATTACHMENT1,
+        GL_COLOR_ATTACHMENT2
+    };
 
     glGenFramebuffers(1, &framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER,
                            GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D,
-                           pageTextureRaw,
+                           albedo,
                            0);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT1,
+                           GL_TEXTURE_2D,
+                           displacement,
+                           0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT2,
+                           GL_TEXTURE_2D,
+                           normal,
+                           0);
+    glDrawBuffers(3, drawBuffers);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     return framebuffer;
 }
 
-GLuint LoadGenerationProgram(bool isHdr)
+GLuint LoadGenerationProgram()
 {
     djg_program *djgp = djgp_create();
     GLuint program;
 
+    djgp_push_string(djgp,
+                     "#define WORLD_SPACE_TEXTURE_DIMENSIONS_BUFFER_BINDING %i\n",
+                     BUFFER_TEXTURE_DIMENSIONS);
+    djgp_push_file(djgp, PATH_TO_NOISE_GLSL_LIBRARY "gpu_noise_lib.glsl");
+    djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/TerrainTexture.glsl");
     djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
     djgp_push_file(djgp, PATH_TO_SRC_DIRECTORY "./shaders/TextureGeneration.glsl");
     djgp_to_gl(djgp, 450, false, true, &program);
     djgp_release(djgp);
+
+    glUseProgram(program);
+    {
+        GLint albedoLocations[] = {
+            TEXTURE_AMAP_SAND,
+            TEXTURE_AMAP_GRASS,
+            TEXTURE_AMAP_ROCK
+        };
+        GLint displacementLocations[] = {
+            TEXTURE_DMAP_SAND,
+            TEXTURE_DMAP_GRASS,
+            TEXTURE_DMAP_ROCK
+        };
+        glUniform1i(glGetUniformLocation(program, "TT_TerrainDisplacementSampler"),
+                    TEXTURE_DMAP_TERRAIN);
+        glUniform1iv(glGetUniformLocation(program, "TT_DetailAlbedoSamplers"),
+                     DETAIL_MAP_COUNT,
+                     albedoLocations);
+        glUniform1iv(glGetUniformLocation(program, "TT_DetailDisplacementSamplers"),
+                     DETAIL_MAP_COUNT,
+                     displacementLocations);
+    }
+    glUseProgram(0);
 
     return program;
 }
 
 void ExportTexture()
 {
-    // TODO
+    int textureRes = 17;
+    int pageRes = 10;
+    int texelsPerPage = 1 << (2 * pageRes);
+    struct {
+        struct {
+            uint8_t *data;
+            int byteSize;
+        } albedo, normal, displacement;
+    } rawTextureData, textureData;
+    GLuint textures[TEXTURE_EXPORT_COUNT];
+    GLuint framebuffer, program;
+    tt_Texture *tt;
+
+    // init OpenGL resources
+    textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW] = LoadExportTexture(TEXTURE_EXPORT_PAGE_ALBEDO,
+                                                                 GL_RGBA8,
+                                                                 1 << pageRes);
+    textures[TEXTURE_EXPORT_PAGE_ALBEDO] = LoadExportTexture(TEXTURE_EXPORT_PAGE_ALBEDO,
+                                                             GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
+                                                             1 << pageRes);
+    textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW] = LoadExportTexture(TEXTURE_EXPORT_PAGE_NORMAL,
+                                                                 GL_RG8,
+                                                                 1 << pageRes);
+    textures[TEXTURE_EXPORT_PAGE_NORMAL] = LoadExportTexture(TEXTURE_EXPORT_PAGE_NORMAL,
+                                                             GL_COMPRESSED_RED_GREEN_RGTC2_EXT,
+                                                             1 << pageRes);
+    textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT] = LoadExportTexture(TEXTURE_EXPORT_PAGE_DISPLACEMENT,
+                                                                   GL_R16,
+                                                                   1 << pageRes);
+    framebuffer = LoadFramebuffer(textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW],
+                                  textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT],
+                                  textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW]);
+    program = LoadGenerationProgram();
+
+    // create the tt_Texture file
+    TT_LOG("Creating texture file...");
+    int64_t resolutions[] = {pageRes, pageRes, pageRes};
+    tt_Format formats[]   = {/*albedo*/TT_FORMAT_BC1,
+                             /*displacement*/TT_FORMAT_R16,
+                             /*normals*/TT_FORMAT_BC5};
+    //tt_CreateLayered("texture.tt", textureRes, 3, resolutions, formats);
+    tt_Create("texture.tt", textureRes, pageRes, TT_FORMAT_BC1);
+    tt = tt_Load("texture.tt", /* cache (not important here) */16);
+
+    // allocate memory for raw data
+    rawTextureData.albedo.byteSize          = texelsPerPage * /* RGBA8 */4;
+    rawTextureData.normal.byteSize          = texelsPerPage * /* RG8 */2;
+    rawTextureData.displacement.byteSize    = texelsPerPage * /* R16 */2;
+    rawTextureData.albedo.data              = (uint8_t *)malloc(rawTextureData.albedo.byteSize);
+    rawTextureData.normal.data              = (uint8_t *)malloc(rawTextureData.normal.byteSize);
+    rawTextureData.displacement.data        = (uint8_t *)malloc(rawTextureData.displacement.byteSize);
+
+    // allocate memory for compressed data
+    glGetTextureLevelParameteriv(textures[TEXTURE_EXPORT_PAGE_ALBEDO], 0,
+                                 GL_TEXTURE_COMPRESSED_IMAGE_SIZE,
+                                 &textureData.albedo.byteSize);
+    textureData.albedo.data = (uint8_t *)malloc(textureData.albedo.byteSize);
+    glGetTextureLevelParameteriv(textures[TEXTURE_EXPORT_PAGE_NORMAL], 0,
+                                 GL_TEXTURE_COMPRESSED_IMAGE_SIZE,
+                                 &textureData.normal.byteSize);
+    textureData.normal.data = (uint8_t *)malloc(textureData.normal.byteSize);
+
+    // create pages and write to disk
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glViewport(0, 0, 1 << pageRes, 1 << pageRes);
+    glUseProgram(program);
+    glBindVertexArray(g_gl.vertexArray);
+    for (int64_t i = 0; i < (2 << tt->storage.header.depth); ++i) {
+        TT_LOG("Generating page %li / %i", i + 1, (2 << tt->storage.header.depth));
+        int64_t pageSize = textureData.albedo.byteSize
+                         + 0*rawTextureData.displacement.byteSize
+                         + 0*textureData.normal.byteSize;
+
+        // write to raw data
+        glUniform1ui(glGetUniformLocation(program, "u_NodeID"), i);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // retrieve raw data from the GPU
+        glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW],
+                          0, GL_RGBA, GL_UNSIGNED_BYTE,
+                          rawTextureData.albedo.byteSize,
+                          rawTextureData.albedo.data);
+#if 0
+        glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW],
+                          0, GL_RG, GL_UNSIGNED_BYTE,
+                          rawTextureData.normal.byteSize,
+                          rawTextureData.normal.data);
+        glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT],
+                          0, GL_RED, GL_UNSIGNED_SHORT,
+                          rawTextureData.displacement.byteSize,
+                          rawTextureData.displacement.data);
+#endif
+        // compress raw data on the GPU
+        glTextureSubImage2D(textures[TEXTURE_EXPORT_PAGE_ALBEDO],
+                            0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            GL_RGBA, GL_UNSIGNED_BYTE,
+                            rawTextureData.albedo.data);
+#if 0
+        glTextureSubImage2D(textures[TEXTURE_EXPORT_PAGE_NORMAL],
+                            0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            GL_RG, GL_UNSIGNED_BYTE,
+                            rawTextureData.normal.data);
+#endif
+        glGetCompressedTextureImage(textures[TEXTURE_EXPORT_PAGE_ALBEDO], 0,
+                                    textureData.albedo.byteSize,
+                                    textureData.albedo.data);
+#if 0
+        glGetCompressedTextureImage(textures[TEXTURE_EXPORT_PAGE_NORMAL], 0,
+                                    textureData.normal.byteSize,
+                                    textureData.normal.data);
+#endif
+
+        // write compressed data to disk
+        fseek(tt->storage.stream,
+              sizeof(tt__Header) + (uint64_t)pageSize * (uint64_t)i,
+              SEEK_SET);
+        fwrite(textureData.albedo.data,
+               textureData.albedo.byteSize,
+               1, tt->storage.stream);
+        /*fwrite(rawTextureData.displacement.data,
+               rawTextureData.displacement.byteSize,
+               1, tt->storage.stream);
+        fwrite(textureData.normal.data,
+               textureData.normal.byteSize,
+               1, tt->storage.stream);*/
+    }
+    glBindVertexArray(0);
+    glUseProgram(0);
+
+    TT_LOG("Wrote %f GiB to disk", (float)tt_StorageSize(tt) / (1024.f * 1024.f * 1024.f));
+
+    // release OpenGL objects
+    glDeleteTextures(TEXTURE_EXPORT_COUNT, textures);
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteProgram(program);
+
+    // release memory
+    tt_Release(tt);
+    free(textureData.albedo.data);
+    free(textureData.normal.data);
+    free(rawTextureData.albedo.data);
+    free(rawTextureData.displacement.data);
+    free(rawTextureData.normal.data);
 }
 
 

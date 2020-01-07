@@ -14,8 +14,8 @@ struct TT_Texel {
     vec3 albedo;
 };
 
-TT_Texel TT_Lookup(vec2 u);
-TT_Texel TT_LookupGrad(vec2 u, vec2 dudx, vec2 dudy);
+TT_Texel TT_TextureFetch(vec2 u);
+TT_Texel TT_TextureFetchGrad(vec2 u, vec2 dudx, vec2 dudy);
 
 ///////// end header file //////////////////////////
 

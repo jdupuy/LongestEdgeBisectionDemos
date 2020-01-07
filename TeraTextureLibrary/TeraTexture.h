@@ -1543,18 +1543,50 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 
     for (int64_t i = 0; i < tt_TexturesPerPage(tt); ++i) {
         GLint textureSize = 1 << tt->storage.header.textures[i].size;
+        int64_t textureByteSize = tt_BytesPerPageTexture(tt, i);
         int64_t streamOffset = streamByteOffset + pageDataOffset;
+        tt_Format textureFormat = tt_PageTextureFormat(tt, i);
 
-        glCompressedTextureSubImage3D(tt->cache.gl.textures[i],
-                                      0,
-                                      0, 0, page->textureID,
-                                      textureSize,
-                                      textureSize,
-                                      1,
-                                      tt__PageTextureInternalFormat(tt, i),
-                                      streamByteSize,
-                                      TT__BUFFER_OFFSET(streamOffset));
-        pageDataOffset+= tt_BytesPerPageTexture(tt, i);
+        if (textureFormat >= TT_FORMAT_BC1) {
+            glCompressedTextureSubImage3D(tt->cache.gl.textures[i],
+                                          0,
+                                          0, 0, page->textureID,
+                                          textureSize,
+                                          textureSize,
+                                          1,
+                                          tt__PageTextureInternalFormat(tt, i),
+                                          textureByteSize,
+                                          TT__BUFFER_OFFSET(streamOffset));
+        } else {
+            GLenum format, type;
+
+            switch (textureFormat) {
+            case TT_FORMAT_R8: format = GL_RED; type = GL_UNSIGNED_BYTE; break;
+            case TT_FORMAT_R16: format = GL_RED; type = GL_UNSIGNED_SHORT; break;
+            case TT_FORMAT_R16F: format = GL_RED; type = GL_HALF_FLOAT; break;
+            case TT_FORMAT_R32F: format = GL_RED; type = GL_FLOAT; break;
+            case TT_FORMAT_RG8: format = GL_RG; type = GL_UNSIGNED_BYTE; break;
+            case TT_FORMAT_RG16: format = GL_RG; type = GL_UNSIGNED_SHORT; break;
+            case TT_FORMAT_RG16F: format = GL_RG; type = GL_HALF_FLOAT; break;
+            case TT_FORMAT_RG32F: format = GL_RG; type = GL_FLOAT; break;
+            case TT_FORMAT_RGBA8: format = GL_RGBA; type = GL_UNSIGNED_BYTE; break;
+            case TT_FORMAT_RGBA16: format = GL_RGBA; type = GL_UNSIGNED_SHORT; break;
+            case TT_FORMAT_RGBA16F: format = GL_RGBA; type = GL_HALF_FLOAT; break;
+            case TT_FORMAT_RGBA32F: format = GL_RGBA; type = GL_FLOAT; break;
+            default: break;
+            }
+
+            glTextureSubImage3D(tt->cache.gl.textures[i],
+                                0,
+                                0, 0, page->textureID,
+                                textureSize,
+                                textureSize,
+                                1,
+                                format,
+                                type,
+                                TT__BUFFER_OFFSET(streamOffset));
+        }
+        pageDataOffset+= textureByteSize;
     }
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
