@@ -71,7 +71,7 @@ struct FramebufferManager {
 
 // -----------------------------------------------------------------------------
 // Camera Manager
-#define INIT_POS dja::vec3(-2.5f, -2.0f, 1.25f)
+#define INIT_POS dja::vec3(-2.5f, -2.5f, -2.0f)
 enum {
     TONEMAP_UNCHARTED2,
     TONEMAP_FILMIC,
@@ -97,7 +97,7 @@ struct CameraManager {
     TONEMAP_RAW,
     INIT_POS,
     dja::mat3(1.0f),
-    3.5f, 0.4f
+    -0.8f, -0.4f
 };
 #undef INIT_POS
 void updateCameraMatrix()
@@ -108,9 +108,9 @@ void updateCameraMatrix()
     float s2 = sin(g_camera.sideAngle);
 
     g_camera.axis = dja::mat3(
-        c1 * c2, -s1, -c1 * s2,
-        c2 * s1,  c1, -s1 * s2,
-        s2     , 0.0f, c2
+        c1     , s1 * s2, c2 * s1,
+        0.0f   ,      c2,     -s2,
+        -s1    , c1 * s2, c1 * c2
     );
 }
 
@@ -593,7 +593,7 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
     if (g_terrain.flags.wire)
         djgp_push_string(djp, "#define FLAG_WIRE 1\n");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "FrustumCulling.glsl"));
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
     if (g_terrain.method == METHOD_CS) {
         djgp_push_string(djp, "#define BUFFER_BINDING_LEB_NODE_COUNTER %i\n", BUFFER_LEB_NODE_COUNTER);
@@ -693,8 +693,9 @@ bool loadLebReductionProgram()
     LOG("Loading {Reduction-Program}\n");
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisectionSumReduction.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisectionSumReduction.glsl");
+
 
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
@@ -716,8 +717,8 @@ bool loadLebReductionPrepassProgram()
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_string(djp, "#define LEB_REDUCTION_PREPASS\n");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisectionSumReduction.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisectionSumReductionPrepass.glsl");
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
 
@@ -762,7 +763,7 @@ bool loadBatchProgram()
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_string(djp, "#define BUFFER_BINDING_DRAW_ARRAYS_INDIRECT_COMMAND %i\n", BUFFER_TERRAIN_DRAW);
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainBatcher.glsl"));
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
@@ -795,7 +796,7 @@ bool loadTopViewProgram()
     djgp_push_string(djp, "#define LEB_BUFFER_COUNT 1\n");
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "FrustumCulling.glsl"));
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
+    djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainTopView.glsl"));
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
@@ -1103,7 +1104,8 @@ bool loadTerrainVariables()
         * dja::mat4::homogeneous::from_mat3(g_camera.axis);
     dja::mat4 view = dja::inverse(viewInv);
     dja::mat4 model = dja::mat4::homogeneous::scale(g_terrain.size)
-                    * dja::mat4::homogeneous::translation(dja::vec3(-0.5f, -0.5f, 0));
+                    * dja::mat4::homogeneous::translation(dja::vec3(-0.5f, -0.5f, 0))
+                    * dja::mat4::homogeneous::rotation(dja::vec3(1, 0, 0), M_PI / 2.0f);
 
     // set transformations (column-major)
     variables.modelViewMatrix = dja::transpose(view * model);
@@ -2212,22 +2214,13 @@ void mouseMotionCallback(GLFWwindow* window, double x, double y)
         return;
 
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-        dja::mat3 axis = dja::transpose(g_camera.axis);
-        g_camera.axis = dja::mat3::rotation(dja::vec3(0, 0, 1), dx * 5e-3)
-            * g_camera.axis;
-        g_camera.axis = dja::mat3::rotation(axis[1], dy * 5e-3)
-            * g_camera.axis;
-        g_camera.axis[0] = dja::normalize(g_camera.axis[0]);
-        g_camera.axis[1] = dja::normalize(g_camera.axis[1]);
-        g_camera.axis[2] = dja::normalize(g_camera.axis[2]);
-
         g_camera.upAngle-= dx * 5e-3;
-        g_camera.sideAngle+= dy * 5e-3;
+        g_camera.sideAngle-= dy * 5e-3;
         updateCameraMatrix();
     } else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
         dja::mat3 axis = dja::transpose(g_camera.axis);
-        g_camera.pos -= axis[1] * dx * 5e-3 * norm(g_camera.pos);
-        g_camera.pos += axis[2] * dy * 5e-3 * norm(g_camera.pos);
+        g_camera.pos -= axis[0] * dx * 5e-3 * dja::norm(g_camera.pos);
+        g_camera.pos += axis[1] * dy * 5e-3 * dja::norm(g_camera.pos);
     }
 
     x0 = x;
@@ -2242,7 +2235,7 @@ void mouseScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
         return;
 
     dja::mat3 axis = dja::transpose(g_camera.axis);
-    g_camera.pos -= axis[0] * yoffset * 5e-2 * norm(g_camera.pos);
+    g_camera.pos -= axis[2] * yoffset * 5e-2 * norm(g_camera.pos);
 }
 
 void usage(const char *app)
