@@ -246,7 +246,7 @@ void Load(int argc, char **argv)
         GL_TEXTURE3
     };
 
-    g_viewer.texture.tt = tt_Load("texture.tt", /* cache size */2048);
+    g_viewer.texture.tt = tt_Load("texture.tt_128k", /* cache size */2048);
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
     tt_BindPageTextures(g_viewer.texture.tt, textureUnits);
