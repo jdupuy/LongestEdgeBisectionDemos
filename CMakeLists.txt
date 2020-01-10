@@ -150,6 +150,21 @@ unset(SRC_FILES)
 unset(DEMO)
 
 # ------------------------------------------------------------------------------
+set(DEMO TeraTextureMipmap)
+set(SRC_DIR TeraTextureMipmap)
+include_directories(${SRC_DIR})
+aux_source_directory(${SRC_DIR} SRC_FILES)
+add_executable(${DEMO} ${IMGUI_SRC_FILES} ${SRC_FILES} ${SRC_DIR}/glad/glad.c)
+target_link_libraries(${DEMO} glfw)
+target_compile_definitions(
+    ${DEMO} PUBLIC
+    -DPATH_TO_SRC_DIRECTORY="${CMAKE_SOURCE_DIR}/${SRC_DIR}/"
+    -DPATH_TO_ASSET_DIRECTORY="${CMAKE_SOURCE_DIR}/assets/"
+)
+unset(SRC_FILES)
+unset(DEMO)
+
+# ------------------------------------------------------------------------------
 set(DEMO TeraTerrain)
 set(SRC_DIR TeraTerrain)
 include_directories(${SRC_DIR})

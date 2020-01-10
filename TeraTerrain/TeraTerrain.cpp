@@ -1075,7 +1075,7 @@ bool loadTeraTexture()
         GL_TEXTURE2 + TEXTURE_COUNT
     };
 
-    g_terrain.texture.tt = tt_Load("texture.tt", 1024);
+    g_terrain.texture.tt = tt_Load("texture.tt_128k", 1024);
     g_terrain.texture.args.pixelsPerTexelTarget = 1.0f;
 
     tt_BindPageTextures(g_terrain.texture.tt, textureUnits);

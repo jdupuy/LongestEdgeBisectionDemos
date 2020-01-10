@@ -84,6 +84,9 @@ struct TextureGenerator {
         float width, height;        // size in meters
         float zMin, zMax;           // min/max altitude in meters
     } detailsMaps[DETAIL_MAP_COUNT];
+    struct {
+        int size, pageSize;
+    } output;
 } g_textureGenerator = {
     {PATH_TO_ASSET_DIRECTORY "./kauai.png", 5266.0f, 5266.0f, -14.0f, 1587.0f},
     {
@@ -100,7 +103,8 @@ struct TextureGenerator {
             PATH_TO_ASSET_DIRECTORY "./ROCK-13_COLOR_4k.jpg",
             3.0f, 3.0f, 0.0f, 0.7f
         },
-    }
+    },
+    { 12, 10 }
 };
 
 struct TextureViewer {
@@ -358,6 +362,9 @@ void RenderGui()
     {
         ImGui::Text("Pos : %f %f", g_viewer.camera.pos.x, g_viewer.camera.pos.y);
         ImGui::Text("Zoom: %f", g_viewer.camera.zoom);
+        ImGui::Text("Export Settings");
+        ImGui::SliderInt("Size", &g_textureGenerator.output.size, 10, 20);
+        ImGui::SliderInt("PageSize", &g_textureGenerator.output.pageSize, 1, 12);
         if (ImGui::Button("Generate")) {
             ExportTexture();
         }
@@ -470,8 +477,8 @@ GLuint LoadGenerationProgram()
 
 void ExportTexture()
 {
-    int textureRes = 17;
-    int pageRes = 10;
+    int textureRes = g_textureGenerator.output.size;
+    int pageRes = g_textureGenerator.output.pageSize;
     int texelsPerPage = 1 << (2 * pageRes);
     struct {
         struct {
@@ -745,7 +752,7 @@ int main(int argc, char **argv)
 #endif
     // Create the Window
     LOG("Loading {Window-Main}\n");
-    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH+256, VIEWPORT_WIDTH, "Hello Imgui", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH+256, VIEWPORT_WIDTH, "Terrain Generator", NULL, NULL);
     if (window == NULL) {
         LOG("=> Failure <=\n");
         glfwTerminate();
