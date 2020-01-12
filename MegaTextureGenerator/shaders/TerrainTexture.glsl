@@ -10,8 +10,8 @@
 
 struct TT_Texel {
     float altitude;
-    vec2 slope;
     vec3 albedo;
+    vec2 slope;
 };
 
 TT_Texel TT_TextureFetch(vec2 u);
@@ -184,11 +184,11 @@ float TT__TerrainRoughness(vec2 u, float footprintRadius)
     return scale * sqrt(max(1e-8f, Ez.y - Ez.x * Ez.x));
 }
 
-float TT__FractalBrownianMotion(vec2 u)
+float TT__FractalBrownianMotion(vec2 u, int octaveCount = 15)
 {
     float fbm = 0.0f;
     float octaveBegin = 0;
-    float octaveEnd   = 15;
+    float octaveEnd   = float(octaveCount);
     float bound = exp2(-octaveBegin) - exp2(-octaveEnd);
 
     for (float octave = octaveBegin; octave < octaveEnd; ++octave) {
