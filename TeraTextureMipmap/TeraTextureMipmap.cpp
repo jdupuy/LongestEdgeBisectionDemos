@@ -37,6 +37,128 @@ enum {
     TEXTURE_COUNT
 };
 
+typedef struct {
+    int64_t bytesPerTexel;
+    GLenum format, type, internalFormat;
+} RawTextureStorage;
+
+RawTextureStorage GenRawTextureStorage(tt_Format format)
+{
+    RawTextureStorage storage;
+
+    switch (format) {
+    // uint8
+    case TT_FORMAT_R8:
+        storage.format = GL_RED;
+        storage.type   = GL_UNSIGNED_BYTE;
+        storage.internalFormat = GL_R8;
+        storage.bytesPerTexel = 1;
+        break;
+    case TT_FORMAT_RG8:
+        storage.format = GL_RG;
+        storage.type   = GL_UNSIGNED_BYTE;
+        storage.internalFormat = GL_RG8;
+        storage.bytesPerTexel = 2;
+        break;
+    case TT_FORMAT_RGBA8:
+        storage.format = GL_RGBA;
+        storage.type   = GL_UNSIGNED_BYTE;
+        storage.internalFormat = GL_RGBA8;
+        storage.bytesPerTexel = 4;
+        break;
+    // uint16
+    case TT_FORMAT_R16:
+        storage.format = GL_RED;
+        storage.type   = GL_UNSIGNED_SHORT;
+        storage.internalFormat = GL_R16;
+        storage.bytesPerTexel = 2;
+        break;
+    case TT_FORMAT_RG16:
+        storage.format = GL_RG;
+        storage.type   = GL_UNSIGNED_SHORT;
+        storage.internalFormat = GL_RG16;
+        storage.bytesPerTexel = 4;
+        break;
+    case TT_FORMAT_RGBA16:
+        storage.format = GL_RGBA;
+        storage.type   = GL_UNSIGNED_SHORT;
+        storage.internalFormat = GL_RGBA16;
+        storage.bytesPerTexel = 8;
+        break;
+    // f16
+    case TT_FORMAT_R16F:
+        storage.format = GL_RED;
+        storage.type   = GL_HALF_FLOAT;
+        storage.internalFormat = GL_R16F;
+        storage.bytesPerTexel = 2;
+        break;
+    case TT_FORMAT_RG16F:
+        storage.format = GL_RG;
+        storage.type   = GL_HALF_FLOAT;
+        storage.internalFormat = GL_RG16F;
+        storage.bytesPerTexel = 4;
+        break;
+    case TT_FORMAT_RGBA16F:
+        storage.format = GL_RGBA;
+        storage.type   = GL_HALF_FLOAT;
+        storage.internalFormat = GL_RGBA16F;
+        storage.bytesPerTexel = 8;
+        break;
+    // f32
+    case TT_FORMAT_R32F:
+        storage.format = GL_RED;
+        storage.type   = GL_FLOAT;
+        storage.internalFormat = GL_R32F;
+        storage.bytesPerTexel = 4;
+        break;
+    case TT_FORMAT_RG32F:
+        storage.format = GL_RG;
+        storage.type   = GL_FLOAT;
+        storage.internalFormat = GL_RG32F;
+        storage.bytesPerTexel = 8;
+        break;
+    case TT_FORMAT_RGBA32F:
+        storage.format = GL_RGBA;
+        storage.type   = GL_FLOAT;
+        storage.internalFormat = GL_RGBA32F;
+        storage.bytesPerTexel = 16;
+        break;
+    // Compressed formats
+    case TT_FORMAT_BC1:
+    case TT_FORMAT_BC1_ALPHA:
+    case TT_FORMAT_BC2:
+    case TT_FORMAT_BC3:
+        storage.format = GL_RGBA;
+        storage.type   = GL_UNSIGNED_BYTE;
+        storage.internalFormat = GL_RGBA8;
+        storage.bytesPerTexel = 4;
+        break;
+    case TT_FORMAT_BC4:
+        storage.format = GL_RED;
+        storage.type   = GL_UNSIGNED_BYTE;
+        storage.internalFormat = GL_R8;
+        storage.bytesPerTexel = 1;
+        break;
+    case TT_FORMAT_BC5:
+        storage.format = GL_RG;
+        storage.type   = GL_UNSIGNED_BYTE;
+        storage.internalFormat = GL_RG8;
+        storage.bytesPerTexel = 2;
+        break;
+    case TT_FORMAT_BC6:
+    case TT_FORMAT_BC6_SIGNED:
+    case TT_FORMAT_BC7:
+    case TT_FORMAT_BC7_SRGB:
+        storage.format = GL_RGBA;
+        storage.type   = GL_HALF_FLOAT;
+        storage.internalFormat = GL_RGBA16F;
+        storage.bytesPerTexel = 4;
+        break;
+    }
+
+    return storage;
+}
+
 GLuint LoadTexture(int textureID, GLenum internalFormat, int size)
 {
     GLuint texture;
@@ -113,8 +235,10 @@ GLuint LoadVertexArray()
 
 void Run(int argc, char **argv)
 {
+    int64_t pageTextureByteOffset = 0;
+
     // load texture
-    tt_Texture *tt = tt_Load("texture.tt_128k", 256);
+    tt_Texture *tt = tt_Load("texture.tt", 16);
     // MIPmap texture
     int depth = tt->storage.header.depth - 1;
 
@@ -129,14 +253,15 @@ void Run(int argc, char **argv)
     for (int textureID = 0; textureID < tt_TexturesPerPage(tt); ++textureID) {
         int64_t textureSize     = tt_PageTextureSize(tt, textureID);
         tt_Format textureFormat = tt_PageTextureFormat(tt, textureID);
+        RawTextureStorage storage = GenRawTextureStorage(textureFormat);
         int64_t bytesPerPage        = tt_BytesPerPage(tt);
         int64_t bytesPerPageTexture = tt_BytesPerPageTexture(tt, textureID);
-        int64_t bytesPerPageTextureRaw = /*RGBA*/4 * (1 << (2 * textureSize));
-        uint8_t *pageData = (uint8_t *)malloc(2 * bytesPerPage);
-        uint8_t *textureData = (uint8_t *)malloc(bytesPerPageTexture);
+        int64_t bytesPerPageTextureRaw = storage.bytesPerTexel * (1 << (2 * textureSize));
+        uint8_t *pageData       = (uint8_t *)malloc(2 * bytesPerPage);
+        uint8_t *textureData    = (uint8_t *)malloc(bytesPerPageTexture);
         uint8_t *textureRawData = (uint8_t *)malloc(bytesPerPageTextureRaw);
         GLuint textures[TEXTURE_COUNT], framebuffer;
-        int64_t pageTextureByteOffset = 0;
+
 
         // load textures
         textures[TEXTURE_PAGE_CHILDREN] = LoadChildrenTexture(TEXTURE_PAGE_CHILDREN,
@@ -146,7 +271,7 @@ void Run(int argc, char **argv)
                                              tt__PageTextureInternalFormat(tt, textureID),
                                              textureSize);
         textures[TEXTURE_PAGE_RAW] = LoadTexture(TEXTURE_PAGE_RAW,
-                                                 /*TODO: */GL_RGBA8,
+                                                 storage.internalFormat,
                                                  textureSize);
         // load framebuffer
         framebuffer = LoadFramebuffer(textures[TEXTURE_PAGE_RAW]);
@@ -222,11 +347,11 @@ void Run(int argc, char **argv)
 
                 // compress page data on the GPU
                 glGetTextureImage(textures[TEXTURE_PAGE_RAW],
-                                  0, GL_RGBA, GL_UNSIGNED_BYTE,
+                                  0, storage.format, storage.type,
                                   bytesPerPageTextureRaw, textureRawData);
                 glTextureSubImage2D(textures[TEXTURE_PAGE],
                                     0, 0, 0, 1 << textureSize, 1 << textureSize,
-                                    GL_RGBA, GL_UNSIGNED_BYTE, textureRawData);
+                                    storage.format, storage.type, textureRawData);
                 glGetCompressedTextureImage(textures[TEXTURE_PAGE], 0, bytesPerPageTexture, textureData);
 
                 // write compressed data to disk
@@ -238,6 +363,7 @@ void Run(int argc, char **argv)
         }
 
         pageTextureByteOffset+= bytesPerPageTexture;
+        TT_LOG("%li (%li)", tt_BytesPerPageTexture(tt, 0) + tt_BytesPerPageTexture(tt, 1), bytesPerPage);
 
         // cleanup
         glDeleteTextures(TEXTURE_COUNT, textures);
