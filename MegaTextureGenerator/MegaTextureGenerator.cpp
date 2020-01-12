@@ -515,10 +515,10 @@ void ExportTexture()
     TT_LOG("Creating texture file...");
     int64_t resolutions[] = {pageRes, pageRes, pageRes};
     tt_Format formats[]   = {/*albedo*/TT_FORMAT_BC1,
-                             /*displacement*/TT_FORMAT_R16,
-                             /*normals*/TT_FORMAT_BC5};
-    //tt_CreateLayered("texture.tt", textureRes, 3, resolutions, formats);
-    tt_Create("texture.tt", textureRes, pageRes, TT_FORMAT_BC1);
+                             /*normals*/TT_FORMAT_BC5,
+                             /*displacement*/TT_FORMAT_R16};
+    tt_CreateLayered("texture.tt", textureRes, 2, resolutions, formats);
+    //tt_Create("texture.tt", textureRes, pageRes, TT_FORMAT_BC1);
     tt = tt_Load("texture.tt", /* cache (not important here) */16);
 
     // allocate memory for raw data
@@ -547,8 +547,8 @@ void ExportTexture()
     for (int64_t i = 0; i < (2 << tt->storage.header.depth); ++i) {
         TT_LOG("Generating page %li / %i", i + 1, (2 << tt->storage.header.depth));
         int64_t pageSize = textureData.albedo.byteSize
-                         + 0*rawTextureData.displacement.byteSize
-                         + 0*textureData.normal.byteSize;
+                         + textureData.normal.byteSize
+                         + 0*rawTextureData.displacement.byteSize;
 
         // write to raw data
         glUniform1ui(glGetUniformLocation(program, "u_NodeID"), i);
@@ -559,11 +559,13 @@ void ExportTexture()
                           0, GL_RGBA, GL_UNSIGNED_BYTE,
                           rawTextureData.albedo.byteSize,
                           rawTextureData.albedo.data);
-#if 0
+#if 1
         glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW],
                           0, GL_RG, GL_UNSIGNED_BYTE,
                           rawTextureData.normal.byteSize,
                           rawTextureData.normal.data);
+#endif
+#if 0
         glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT],
                           0, GL_RED, GL_UNSIGNED_SHORT,
                           rawTextureData.displacement.byteSize,
@@ -574,7 +576,7 @@ void ExportTexture()
                             0, 0, 0, 1 << pageRes, 1 << pageRes,
                             GL_RGBA, GL_UNSIGNED_BYTE,
                             rawTextureData.albedo.data);
-#if 0
+#if 1
         glTextureSubImage2D(textures[TEXTURE_EXPORT_PAGE_NORMAL],
                             0, 0, 0, 1 << pageRes, 1 << pageRes,
                             GL_RG, GL_UNSIGNED_BYTE,
@@ -583,7 +585,7 @@ void ExportTexture()
         glGetCompressedTextureImage(textures[TEXTURE_EXPORT_PAGE_ALBEDO], 0,
                                     textureData.albedo.byteSize,
                                     textureData.albedo.data);
-#if 0
+#if 1
         glGetCompressedTextureImage(textures[TEXTURE_EXPORT_PAGE_NORMAL], 0,
                                     textureData.normal.byteSize,
                                     textureData.normal.data);
@@ -596,12 +598,14 @@ void ExportTexture()
         fwrite(textureData.albedo.data,
                textureData.albedo.byteSize,
                1, tt->storage.stream);
-        /*fwrite(rawTextureData.displacement.data,
-               rawTextureData.displacement.byteSize,
-               1, tt->storage.stream);
         fwrite(textureData.normal.data,
                textureData.normal.byteSize,
-               1, tt->storage.stream);*/
+               1, tt->storage.stream);
+#if 0
+        fwrite(rawTextureData.displacement.data,
+               rawTextureData.displacement.byteSize,
+               1, tt->storage.stream);
+#endif
     }
     glBindVertexArray(0);
     glUseProgram(0);
