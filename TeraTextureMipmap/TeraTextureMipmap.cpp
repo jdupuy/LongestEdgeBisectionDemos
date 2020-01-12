@@ -235,7 +235,6 @@ GLuint LoadVertexArray()
 
 void Run(int argc, char **argv)
 {
-    int64_t pageTextureByteOffset = 0;
 
     // load texture
     tt_Texture *tt = tt_Load("texture.tt", 16);
@@ -244,6 +243,8 @@ void Run(int argc, char **argv)
 
     GLuint vertexArray = LoadVertexArray();
     GLuint program = LoadGenerationProgram();
+
+    int64_t pageTextureByteOffset = 0;
 
     glBindVertexArray(vertexArray);
     glUseProgram(program);
