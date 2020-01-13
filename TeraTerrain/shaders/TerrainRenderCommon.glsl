@@ -248,12 +248,50 @@ ClipSpaceAttribute TessellateClipSpaceTriangle(
 #if FLAG_DISPLACE
     // displace the surface in clip space
     vec4 upDir = u_ModelViewProjectionMatrix[2];
-    float z = u_DmapFactor * textureLod(u_DmapSampler, texCoord, 0.0).r;
+    //float z = u_DmapFactor * textureLod(u_DmapSampler, texCoord, 0.0).r;
+    float z = tt_texture(2, texCoord).r;
 
     position+= upDir * z;
 #endif
 
     return ClipSpaceAttribute(position, texCoord);
+}
+
+
+/*******************************************************************************
+ * Normal Decompression Utilities -- Decompresses a normal from texture data
+ *
+ */
+vec2 SquareToDisk(vec2 u)
+{
+    float pi = 3.14159265359f;
+    float r1 = 2.0f * u.x - 1.0f;
+    float r2 = 2.0f * u.y - 1.0f;
+    float phi, r;
+
+    if (r1 == 0.0f && r2 == 0.0f) {
+        r = phi = 0.0f;
+    } else if (r1 * r1 > r2 * r2) {
+        r = r1;
+        phi = (pi / 4.0f) * (r2 / r1);
+    } else {
+        r = r2;
+        phi = (pi / 2.0f) - (r1 / r2) * (pi / 4.0f);
+    }
+
+    return r * vec2(cos(phi), sin(phi));
+}
+
+vec3 DiskToNormal(vec2 d)
+{
+    float z = sqrt(clamp(1.0f - dot(d, d), 0.0f, 1.0f));
+
+    return vec3(d, z);
+}
+
+vec3 DecompressNormal(vec2 textureData)
+{
+    return DiskToNormal(SquareToDisk(textureData));
 }
 
 
@@ -264,6 +302,7 @@ ClipSpaceAttribute TessellateClipSpaceTriangle(
 #ifdef FRAGMENT_SHADER
 vec4 ShadeFragment(vec2 texCoord)
 {
+    const float pi = 3.14159265359f;
 #if FLAG_DISPLACE
     vec2 smap = texture(u_SmapSampler, texCoord).rg * u_DmapFactor;
     vec3 n = normalize(vec3(-smap, 1));
@@ -281,8 +320,11 @@ vec4 ShadeFragment(vec2 texCoord)
 #elif SHADING_DIFFUSE
     vec2 P = texCoord;
     vec3 albedo = tt_texture(0, P).rgb;
+    vec3 wi = normalize(vec3(0, 0, 1));
+    vec3 wn = DecompressNormal(tt_texture(1, P).rg);
+    //return tt_texture(2, P).rgba;
 
-    return vec4(vec3(clamp(n.z, 0.0, 1.0) / 3.14159) * albedo * 8.0, 1);
+    return vec4(vec3(clamp(dot(wi, wn), 0.0, 1.0) / pi) * albedo * 2.0, 1);
 #elif SHADING_NORMALS
 
     return vec4(abs(n), 1);

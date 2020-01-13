@@ -74,7 +74,7 @@ struct FramebufferManager {
 
 // -----------------------------------------------------------------------------
 // Camera Manager
-#define INIT_POS dja::vec3(-2.5f, -2.5f, -2.0f)
+#define INIT_POS dja::vec3(100.0f, +200.5f, 100.0f)
 enum {
     TONEMAP_UNCHARTED2,
     TONEMAP_FILMIC,
@@ -95,7 +95,7 @@ struct CameraManager {
     dja::mat3 axis;           // 3D frame @deprecated
     float upAngle, sideAngle; // rotation axis
 } g_camera = {
-    80.f, 0.01f, 32.f,
+    80.f, 0.01f, 32000.f,
     PROJECTION_RECTILINEAR,
     TONEMAP_RAW,
     INIT_POS,
@@ -125,7 +125,7 @@ struct TerrainManager {
     struct { bool displace, cull, freeze, wire, topView; } flags;
     struct {
         std::string pathToFile;
-        float scale;
+        float width, height, zMin, zMax;
     } dmap;
     struct {
         tt_Texture *tt;
@@ -140,7 +140,7 @@ struct TerrainManager {
     float size;
 } g_terrain = {
     {true, true, false, false, true},
-    {std::string(PATH_TO_ASSET_DIRECTORY "./kauai.png"), 0.05f},
+    {std::string(PATH_TO_ASSET_DIRECTORY "./kauai.png"), 52660.0f / 10.0f, 52660.0f / 10.0f, -14.0f / 10.0f, 1587.0f / 10.0f},
     {NULL},
     METHOD_CS,
     SHADING_DIFFUSE,
@@ -148,7 +148,7 @@ struct TerrainManager {
     7.0f,
     0.1f,
     24,
-    8
+    8.0f
 };
 
 // -----------------------------------------------------------------------------
@@ -443,7 +443,7 @@ void configureTerrainProgram(GLuint glp, GLuint offset)
 
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_DMAP_FACTOR + offset],
-        g_terrain.dmap.scale);
+        1.0f);
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_LOD_FACTOR + offset],
         lodFactor);
@@ -458,7 +458,7 @@ void configureTerrainProgram(GLuint glp, GLuint offset)
         g_terrain.primitivePixelLengthTarget);
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_MIN_LOD_VARIANCE + offset],
-        sqr(g_terrain.minLodStdev / 64.0f / g_terrain.dmap.scale));
+        sqr(g_terrain.minLodStdev / 64.0f / 1.0f));
     glProgramUniform2f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_SCREEN_RESOLUTION + offset],
         g_framebuffer.w, g_framebuffer.h);
@@ -489,7 +489,7 @@ void configureTopViewProgram()
 {
     glProgramUniform1f(g_gl.programs[PROGRAM_TOPVIEW],
         g_gl.uniforms[UNIFORM_TOPVIEW_DMAP_FACTOR],
-        g_terrain.dmap.scale);
+        1.0f);
     glProgramUniform1i(g_gl.programs[PROGRAM_TOPVIEW],
         g_gl.uniforms[UNIFORM_TOPVIEW_DMAP_SAMPLER],
         TEXTURE_DMAP);
@@ -807,8 +807,6 @@ bool loadTopViewProgram()
     char buf[1024];
 
     LOG("Loading {Top-View-Program}\n");
-    if (g_terrain.flags.displace)
-        djgp_push_string(djp, "#define FLAG_DISPLACE 1\n");
     djgp_push_string(djp, "#define TERRAIN_PATCH_SUBD_LEVEL %i\n", g_terrain.gpuSubd);
     djgp_push_string(djp, "#define TERRAIN_PATCH_TESS_FACTOR %i\n", 1 << g_terrain.gpuSubd);
     djgp_push_string(djp, "#define BUFFER_BINDING_TERRAIN_VARIABLES %i\n", STREAM_TERRAIN_VARIABLES);
@@ -1075,8 +1073,10 @@ bool loadTeraTexture()
         GL_TEXTURE2 + TEXTURE_COUNT
     };
 
-    g_terrain.texture.tt = tt_Load("texture.tt_128k", 1024);
+    g_terrain.texture.tt = tt_Load("texture.tt", 1024);
     g_terrain.texture.args.pixelsPerTexelTarget = 1.0f;
+
+    tt_Displace(g_terrain.texture.tt);
 
     tt_BindPageTextures(g_terrain.texture.tt, textureUnits);
 
@@ -1143,11 +1143,16 @@ bool loadTerrainVariables()
         );
     }
 
+    float width = g_terrain.dmap.width;
+    float height = g_terrain.dmap.height;
+    float zMin = g_terrain.dmap.zMin;
+    float zMax = g_terrain.dmap.zMax;
+    dja::vec3 scale = dja::vec3(width, zMax - zMin, height);
     dja::mat4 viewInv = dja::mat4::homogeneous::translation(g_camera.pos)
                       * dja::mat4::homogeneous::from_mat3(g_camera.axis);
     dja::mat4 view = dja::inverse(viewInv);
-    dja::mat4 model = dja::mat4::homogeneous::scale(g_terrain.size)
-                    * dja::mat4::homogeneous::translation(dja::vec3(-0.5f, -0.5f, 0))
+    dja::mat4 model = dja::mat4::homogeneous::translation(dja::vec3(-width / 2.0f, zMin, +height / 2.0f))
+                    * dja::mat4::homogeneous::scale(dja::vec3(scale))
                     * dja::mat4::homogeneous::rotation(dja::vec3(1, 0, 0), M_PI / 2.0f);
 
     // set transformations (column-major)
@@ -2155,10 +2160,10 @@ void renderViewer()
             if (ImGui::SliderFloat("PixelsPerEdge", &g_terrain.primitivePixelLengthTarget, 1, 32)) {
                 configureTerrainPrograms();
             }
-            if (ImGui::SliderFloat("DmapScale", &g_terrain.dmap.scale, 0.f, 1.f)) {
+            /*if (ImGui::SliderFloat("DmapScale", &g_terrain.dmap.scale, 0.f, 1.f)) {
                 configureTerrainPrograms();
                 configureTopViewProgram();
-            }
+            }*/
             if (ImGui::SliderFloat("LodStdev", &g_terrain.minLodStdev, 0.f, 1.0f, "%.4f")) {
                 configureTerrainPrograms();
             }
