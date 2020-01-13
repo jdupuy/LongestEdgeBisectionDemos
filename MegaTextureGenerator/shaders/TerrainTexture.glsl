@@ -118,7 +118,7 @@ TT__ReMapDisplacementData(
     slope.y*= scale / height;
 }
 
-TT_Texel TT__TextureFetch_Terrain(vec2 u)
+TT_Texel TT__TextureFetch_Terrain_Raw(vec2 u)
 {
     TT_Texel texel;
     vec2 eps = 1.0f / vec2(textureSize(TT_TerrainDisplacementSampler, 0));
@@ -132,10 +132,88 @@ TT_Texel TT__TextureFetch_Terrain(vec2 u)
     texel.slope.y = 0.5f * (y2 - y1) / eps.y;
     texel.albedo = vec3(0.0f);
 
+    return texel;
+}
+
+
+TT_Texel TT__TextureFetch_Terrain(vec2 u)
+{
+    TT_Texel texel = TT__TextureFetch_Terrain_Raw(u);
+
     TT__ReMapDisplacementData(TT_WorldSpaceTextureDimensions[TEXTURE_TERRAIN],
                               texel.altitude, texel.slope);
 
     return texel;
+}
+
+// (footprintradius in worldspace)
+float TT__TerrainCurvature(vec2 u, float footprintRadius)
+{
+    TT__TextureDimensions textureDimensions =
+            TT_WorldSpaceTextureDimensions[TEXTURE_TERRAIN];
+    float width  = textureDimensions.width;
+    float height = textureDimensions.height;
+    float zMin = textureDimensions.zMin;
+    float zMax = textureDimensions.zMax;
+    vec2 dudx = vec2(2.0f * footprintRadius / width, 0.0f);
+    vec2 dudy = vec2(0.0f, 2.0f * footprintRadius / height);
+    float curvature = textureGrad(TT_TerrainDisplacementSampler, u, dudx, dudy).g;
+    float scale = 2.0f * (zMax - zMin) / (width + height);
+
+    return curvature * scale;
+}
+
+float TT__FractalBrownianMotion(vec2 u, int octaveCount = 10)
+{
+    float fbm = 0.0f;
+    float octaveBegin = 0;
+    float octaveEnd   = float(octaveCount);
+    float bound = exp2(-octaveBegin) - exp2(-octaveEnd);
+
+    for (float octave = octaveBegin; octave < octaveEnd; ++octave) {
+        float sc = exp2(octave);
+
+        fbm+= SimplexPerlin2D(u * sc) / sc;
+    }
+
+    return fbm / bound * 0.5f + 0.5f;
+}
+
+vec3 TT__FractalBrownianMotionDeriv(vec2 u, int octaveCount = 14)
+{
+    vec3 fbm = vec3(0.0f);
+    float octaveBegin = 0;
+    float octaveEnd   = float(octaveCount);
+    float bound = exp2(-octaveBegin) - exp2(-octaveEnd);
+
+    for (float octave = octaveBegin; octave < octaveEnd; ++octave) {
+        float sc = exp2(octave);
+
+        fbm+= SimplexPerlin2D_Deriv(u * sc) / sc;
+    }
+
+    return fbm / bound * 0.5f + 0.5f;
+}
+
+float TT__SimplexNoise(vec2 u)
+{
+    return SimplexPerlin2D(u) * 0.5f + 0.5f;
+}
+
+float TT__Sqr(float x) {return x * x;}
+
+// add procedural displacement based on slope and curvature
+void TT__AddNoise(vec2 u, inout TT_Texel texel)
+{
+    float curvature = TT__TerrainCurvature(u, 128.0f);
+    float slopeSqr = dot(texel.slope, texel.slope);
+    float boost = slopeSqr * clamp(-curvature, 0.0f, 1.0f);
+    vec3 noise = TT__FractalBrownianMotionDeriv(u * 512.0f, 10) / 8.0f;
+
+#if 1
+    texel.altitude+= 1.0f * noise.x;
+    texel.slope+= 1.0f * noise.yz;
+#endif
 }
 
 // lookup detail texture map
@@ -167,43 +245,6 @@ TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
     return texel;
 }
 
-// (footprintradius in worldspace)
-float TT__TerrainRoughness(vec2 u, float footprintRadius)
-{
-    TT__TextureDimensions textureDimensions =
-            TT_WorldSpaceTextureDimensions[TEXTURE_TERRAIN];
-    float width  = textureDimensions.width;
-    float height = textureDimensions.height;
-    float zMin = textureDimensions.zMin;
-    float zMax = textureDimensions.zMax;
-    vec2 dudx = vec2(2.0f * footprintRadius / width, 0.0f);
-    vec2 dudy = vec2(0.0f, 2.0f * footprintRadius / height);
-    vec2 Ez = textureGrad(TT_TerrainDisplacementSampler, u, dudx, dudy).rg;
-    float scale = 2.0f * (zMax - zMin) / (width + height);
-
-    return scale * sqrt(max(1e-8f, Ez.y - Ez.x * Ez.x));
-}
-
-float TT__FractalBrownianMotion(vec2 u, int octaveCount = 15)
-{
-    float fbm = 0.0f;
-    float octaveBegin = 0;
-    float octaveEnd   = float(octaveCount);
-    float bound = exp2(-octaveBegin) - exp2(-octaveEnd);
-
-    for (float octave = octaveBegin; octave < octaveEnd; ++octave) {
-        float sc = exp2(octave);
-
-        fbm+= SimplexPerlin2D(u * sc) / sc;
-    }
-
-    return fbm / bound * 0.5f + 0.5f;
-}
-
-float TT__SimplexNoise(vec2 u)
-{
-    return SimplexPerlin2D(u) * 0.5f + 0.5f;
-}
 
 #define WATER_LEVEL     0.0f
 #define SAND_LEVEL      15.0f
@@ -233,9 +274,9 @@ void TT_AddSand(vec2 u, inout TT_Texel texel)
 void TT_AddGrass(vec2 u, inout TT_Texel texel)
 {
     float slopeSqr = dot(texel.slope, texel.slope);
-    float urng = TT__FractalBrownianMotion(u * 1e4);
+    float urng = 0.0*TT__FractalBrownianMotion(u * 1e4);
 
-    if (slopeSqr <= 4.0f + urng && texel.altitude >= SAND_LEVEL + urng) {
+    if (slopeSqr <= 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_GRASS, u);
 
         texel.altitude+= tmp.altitude;
@@ -247,9 +288,9 @@ void TT_AddGrass(vec2 u, inout TT_Texel texel)
 void TT_AddRock(vec2 u, inout TT_Texel texel)
 {
     float slopeSqr = dot(texel.slope, texel.slope);
-    float urng = TT__FractalBrownianMotion(u * 1e4);
+    float urng = 0.0*TT__FractalBrownianMotion(u * 1e4);
 
-    if (slopeSqr > 4.0f + urng && texel.altitude >= SAND_LEVEL + urng) {
+    if (slopeSqr > 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_ROCK, u);
 
         texel.altitude+= tmp.altitude;
@@ -265,10 +306,13 @@ TT_Texel TT_TextureFetch(vec2 u)
 
     // Add details maps
     texel.albedo = vec3(0, 1, 1);
+#if 1
     TT_AddRock(u, texel);
     TT_AddGrass(u, texel);
     TT_AddSand(u, texel);
     TT_AddWater(u, texel);
+#endif
+    TT__AddNoise(u, texel);
 /*
     float slopeMag = dot(texel.slope, texel.slope);
     float roughness = TT__TerrainRoughness(u, 25.0f);

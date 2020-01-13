@@ -88,7 +88,7 @@ struct TextureGenerator {
         int size, pageSize;
     } output;
 } g_textureGenerator = {
-    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 5266.0f, 5266.0f, -14.0f, 1587.0f},
+    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f, 52660.0f, -14.0f, 1587.0f},
     {
         {
             PATH_TO_ASSET_DIRECTORY "./sand_01_bump_4k.jpg",
@@ -189,23 +189,70 @@ void LoadTerrainDmapTexture()
     int h = djgt->next->y;
     const uint16_t *texels = (const uint16_t *)djgt->next->texels;
     int mipcnt = djgt__mipcnt(w, h, 1);
-    std::vector<uint16_t> dmap(w * h * 2);
+    std::vector<float> dmap(w * h * 4);
 
+    // store height
     for (int j = 0; j < h; ++j)
     for (int i = 0; i < w; ++i) {
         uint16_t z = texels[i + w * j]; // in [0,2^16-1]
         float zf = float(z) / float((1 << 16) - 1);
-        uint16_t z2 = zf * zf * ((1 << 16) - 1);
 
-        dmap[    2 * (i + w * j)] = z;
-        dmap[1 + 2 * (i + w * j)] = z2;
+        dmap[4 * (i + w * j)] = zf;
+    }
+
+    // compute slopes (temporarily)
+    for (int j = 0; j < h; ++j)
+    for (int i = 0; i < w; ++i) {
+        int i1 = std::max(i - 1, 0);
+        int i2 = std::min(i + 1, w - 1);
+        int j1 = std::max(j - 1, 0);
+        int j2 = std::min(j + 1, h - 1);
+        float x1 = dmap[4 * (i1 + w * j)];
+        float x2 = dmap[4 * (i2 + w * j)];
+        float y1 = dmap[4 * (i + w * j1)];
+        float y2 = dmap[4 * (i + w * j2)];
+        float xSlope = 0.5f * (x2 - x1) * (float)w;
+        float ySlope = 0.5f * (y2 - y1) * (float)w;
+
+        dmap[1 + 4 * (i + w * j)] = xSlope;
+        dmap[2 + 4 * (i + w * j)] = ySlope;
+    }
+
+    // compute curvature
+    for (int j = 0; j < h; ++j)
+    for (int i = 0; i < w; ++i) {
+        int i1 = std::max(i - 1, 0);
+        int i2 = std::min(i + 1, w - 1);
+        int j1 = std::max(j - 1, 0);
+        int j2 = std::min(j + 1, h - 1);
+        float dpdx1 = dmap[1 + 4 * (i1 + w * j)];
+        float dpdx2 = dmap[1 + 4 * (i2 + w * j)];
+        //float dpdy1 = dmap[1 + 4 * (i + w * j1)];
+        //float dpdy2 = dmap[1 + 4 * (i + w * j2)];
+        //float dqdx1 = dmap[2 + 4 * (i1 + w * j)];
+        //float dqdx2 = dmap[2 + 4 * (i2 + w * j)];
+        float dqdy1 = dmap[2 + 4 * (i + w * j1)];
+        float dqdy2 = dmap[2 + 4 * (i + w * j2)];
+        float dpdx = 0.5f * (dpdx2 - dpdx1) * (float)(w);
+        //float dpdy = 0.5f * (dpdy2 - dpdy1) * (float)(h);
+        //float dqdx = 0.5f * (dqdx2 - dqdx1) * (float)(w);
+        float dqdy = 0.5f * (dqdy2 - dqdy1) * (float)(h);
+        float curvature = dpdx + dqdy / 2.0f;
+
+        dmap[3 + 4 * (i + w * j)] = curvature;
+    }
+
+    // store curvature in second channel
+    for (int j = 0; j < h; ++j)
+    for (int i = 0; i < w; ++i) {
+        dmap[1 + 4 * (i + w * j)] = dmap[3 + 4 * (i + w * j)];
     }
 
     glGenTextures(1, glt);
     glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_TERRAIN);
     glBindTexture(GL_TEXTURE_2D, *glt);
-    glTexStorage2D(GL_TEXTURE_2D, mipcnt, GL_RG16, w, h);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RG, GL_UNSIGNED_SHORT, &dmap[0]);
+    glTexStorage2D(GL_TEXTURE_2D, mipcnt, GL_RGBA32F, w, h);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, &dmap[0]);
     glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -393,7 +440,7 @@ GLuint LoadExportTexture(int textureID, GLenum internalformat, int size)
     glActiveTexture(GL_TEXTURE0 + TEXTURE_COUNT + textureID);
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, internalformat, size, size);
+    glTexStorage2D(GL_TEXTURE_2D, size, internalformat, 1 << size, 1 << size);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -479,7 +526,6 @@ void ExportTexture()
 {
     int textureRes = g_textureGenerator.output.size;
     int pageRes = g_textureGenerator.output.pageSize;
-    int texelsPerPage = 1 << (2 * pageRes);
     struct {
         struct {
             uint8_t *data;
@@ -493,19 +539,19 @@ void ExportTexture()
     // init OpenGL resources
     textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW] = LoadExportTexture(TEXTURE_EXPORT_PAGE_ALBEDO,
                                                                  GL_RGBA8,
-                                                                 1 << pageRes);
+                                                                 pageRes);
     textures[TEXTURE_EXPORT_PAGE_ALBEDO] = LoadExportTexture(TEXTURE_EXPORT_PAGE_ALBEDO,
                                                              GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
-                                                             1 << pageRes);
+                                                             pageRes);
     textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW] = LoadExportTexture(TEXTURE_EXPORT_PAGE_NORMAL,
                                                                  GL_RG8,
-                                                                 1 << pageRes);
+                                                                 pageRes);
     textures[TEXTURE_EXPORT_PAGE_NORMAL] = LoadExportTexture(TEXTURE_EXPORT_PAGE_NORMAL,
                                                              GL_COMPRESSED_RED_GREEN_RGTC2_EXT,
-                                                             1 << pageRes);
+                                                             pageRes);
     textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT] = LoadExportTexture(TEXTURE_EXPORT_PAGE_DISPLACEMENT,
                                                                    GL_R16,
-                                                                   1 << pageRes);
+                                                                   pageRes);
     framebuffer = LoadFramebuffer(textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW],
                                   textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT],
                                   textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW]);
@@ -513,18 +559,17 @@ void ExportTexture()
 
     // create the tt_Texture file
     TT_LOG("Creating texture file...");
-    int64_t resolutions[] = {pageRes, pageRes, pageRes};
+    int64_t pageResolutions[] = {pageRes, pageRes, pageRes - 2};
     tt_Format formats[]   = {/*albedo*/TT_FORMAT_BC1,
                              /*normals*/TT_FORMAT_BC5,
                              /*displacement*/TT_FORMAT_R16};
-    tt_CreateLayered("texture.tt", textureRes, 2, resolutions, formats);
-    //tt_Create("texture.tt", textureRes, pageRes, TT_FORMAT_BC1);
+    tt_CreateLayered("texture.tt", textureRes, 3, pageResolutions, formats);
     tt = tt_Load("texture.tt", /* cache (not important here) */16);
 
     // allocate memory for raw data
-    rawTextureData.albedo.byteSize          = texelsPerPage * /* RGBA8 */4;
-    rawTextureData.normal.byteSize          = texelsPerPage * /* RG8 */2;
-    rawTextureData.displacement.byteSize    = texelsPerPage * /* R16 */2;
+    rawTextureData.albedo.byteSize          = (1 << (2 * pageResolutions[0])) * /* RGBA8 */4;
+    rawTextureData.normal.byteSize          = (1 << (2 * pageResolutions[1])) * /* RG8 */2;
+    rawTextureData.displacement.byteSize    = (1 << (2 * pageResolutions[2])) * /* R16 */2;
     rawTextureData.albedo.data              = (uint8_t *)malloc(rawTextureData.albedo.byteSize);
     rawTextureData.normal.data              = (uint8_t *)malloc(rawTextureData.normal.byteSize);
     rawTextureData.displacement.data        = (uint8_t *)malloc(rawTextureData.displacement.byteSize);
@@ -548,48 +593,45 @@ void ExportTexture()
         TT_LOG("Generating page %li / %i", i + 1, (2 << tt->storage.header.depth));
         int64_t pageSize = textureData.albedo.byteSize
                          + textureData.normal.byteSize
-                         + 0*rawTextureData.displacement.byteSize;
+                         + rawTextureData.displacement.byteSize;
 
         // write to raw data
         glUniform1ui(glGetUniformLocation(program, "u_NodeID"), i);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glGenerateTextureMipmap(textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW]);
+        glGenerateTextureMipmap(textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT]);
+        glGenerateTextureMipmap(textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW]);
 
         // retrieve raw data from the GPU
         glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW],
                           0, GL_RGBA, GL_UNSIGNED_BYTE,
                           rawTextureData.albedo.byteSize,
                           rawTextureData.albedo.data);
-#if 1
         glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_NORMAL_RAW],
                           0, GL_RG, GL_UNSIGNED_BYTE,
                           rawTextureData.normal.byteSize,
                           rawTextureData.normal.data);
-#endif
-#if 0
         glGetTextureImage(textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT],
-                          0, GL_RED, GL_UNSIGNED_SHORT,
+                          pageResolutions[0] - pageResolutions[2],
+                          GL_RED, GL_UNSIGNED_SHORT,
                           rawTextureData.displacement.byteSize,
                           rawTextureData.displacement.data);
-#endif
+
         // compress raw data on the GPU
         glTextureSubImage2D(textures[TEXTURE_EXPORT_PAGE_ALBEDO],
-                            0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            0, 0, 0, 1 << pageResolutions[0], 1 << pageResolutions[0],
                             GL_RGBA, GL_UNSIGNED_BYTE,
                             rawTextureData.albedo.data);
-#if 1
         glTextureSubImage2D(textures[TEXTURE_EXPORT_PAGE_NORMAL],
-                            0, 0, 0, 1 << pageRes, 1 << pageRes,
+                            0, 0, 0, 1 << pageResolutions[1], 1 << pageResolutions[0],
                             GL_RG, GL_UNSIGNED_BYTE,
                             rawTextureData.normal.data);
-#endif
         glGetCompressedTextureImage(textures[TEXTURE_EXPORT_PAGE_ALBEDO], 0,
                                     textureData.albedo.byteSize,
                                     textureData.albedo.data);
-#if 1
         glGetCompressedTextureImage(textures[TEXTURE_EXPORT_PAGE_NORMAL], 0,
                                     textureData.normal.byteSize,
                                     textureData.normal.data);
-#endif
 
         // write compressed data to disk
         fseek(tt->storage.stream,
@@ -601,11 +643,9 @@ void ExportTexture()
         fwrite(textureData.normal.data,
                textureData.normal.byteSize,
                1, tt->storage.stream);
-#if 0
         fwrite(rawTextureData.displacement.data,
                rawTextureData.displacement.byteSize,
                1, tt->storage.stream);
-#endif
     }
     glBindVertexArray(0);
     glUseProgram(0);

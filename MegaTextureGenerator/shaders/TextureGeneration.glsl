@@ -82,20 +82,26 @@ layout(location = 2) out vec2   o_Normal;
 
 void main()
 {
-    vec2 u = i_TexCoord;
-    squareToTriangle(u);
+    if (u_NodeID > 0) {
+        vec2 u = i_TexCoord;
+        squareToTriangle(u);
 
-    leb_Node node = leb_Node(u_NodeID, findMSB(u_NodeID));
-    vec3 xPos = vec3(0, 0, 1), yPos = vec3(1, 0, 0);
-    mat2x3 pos = leb_DecodeNodeAttributeArray_Quad(node, mat2x3(xPos, yPos));
-    vec2 p1 = vec2(pos[0][0], pos[1][0]);
-    vec2 p2 = vec2(pos[0][1], pos[1][1]);
-    vec2 p3 = vec2(pos[0][2], pos[1][2]);
-    vec2 uv = BarycentricInterpolation(vec2[3](p1, p2, p3), u);
-    TT_Texel texel = TT_TextureFetch(uv);
+        leb_Node node = leb_Node(u_NodeID, findMSB(u_NodeID));
+        vec3 xPos = vec3(0, 0, 1), yPos = vec3(1, 0, 0);
+        mat2x3 pos = leb_DecodeNodeAttributeArray_Quad(node, mat2x3(xPos, yPos));
+        vec2 p1 = vec2(pos[0][0], pos[1][0]);
+        vec2 p2 = vec2(pos[0][1], pos[1][1]);
+        vec2 p3 = vec2(pos[0][2], pos[1][2]);
+        vec2 uv = BarycentricInterpolation(vec2[3](p1, p2, p3), u);
+        TT_Texel texel = TT_TextureFetch(uv);
 
-    o_Albedo = vec4(texel.albedo, 1.0);
-    o_Displacement = texel.altitude / 1600.0f;
-    o_Normal = SlopeToSquare(texel.slope);
+        o_Albedo = vec4(texel.albedo, 1.0);
+        o_Displacement = texel.altitude / 1600.0f;
+        o_Normal = SlopeToSquare(texel.slope);
+    } else /* NULL node */{
+        o_Albedo = vec4(1.0);
+        o_Displacement = 1.0f;
+        o_Normal = vec2(1.0f);
+    }
 }
 #endif
