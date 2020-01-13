@@ -96,6 +96,9 @@ typedef struct {
 // update
 TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args);
 
+// enable displacement mapping (last layer by convention)
+TTDEF void tt_Displace(tt_Texture *tt);
+
 // raw OpenGL accessors
 TTDEF GLuint tt_LebBuffer(const tt_Texture *tt);
 TTDEF GLuint tt_IndirectionBuffer(const tt_Texture *tt);
@@ -647,7 +650,7 @@ static void tt__ReleaseCacheTextures(tt_Texture *tt)
  *
  */
 enum {
-    TT__CACHE_GL_BUFFER_LEB,    // LEB heap
+    TT__CACHE_GL_BUFFER_LEB,            // LEB heap
     TT__CACHE_GL_BUFFER_INDIRECTION,    // mapping from nodeID to textureID
 
     TT__CACHE_GL_BUFFER_COUNT,
@@ -985,48 +988,73 @@ static const char *tt__LongestEdgeBisectionReductionPrepassShaderSource()
     return str;
 }
 
-static void tt__LoadUpdaterProgramSplit(GLuint *program)
+static const char *tt__TeraTextureShaderSource()
 {
+    static const char *str =
+        #include "TeraTexture.glsl.str"
+    ;
+
+    return str;
+}
+
+static void
+tt__LoadUpdaterProgramSplitMerge(
+    GLuint *program,
+    const char *flag,
+    int64_t texturesPerPage,
+    bool displace
+) {
     char header[256];
+    const char *displacementFlag = displace ? "#define FLAG_DISPLACE 1\n" : "";
     const char *strings[] = {
         "#version 450\n",
         header,
-        "#define FLAG_SPLIT 1\n",
+        flag,
+        displacementFlag,
         tt__LongestEdgeBisectionLibraryShaderSource(),
+        tt__TeraTextureShaderSource(),
         tt__LongestEdgeBisectionUpdateShaderSource()
     };
 
     sprintf(header,
+            "#define LEB_BUFFER_COUNT 2\n"
+            "#define TT_LEB_ID 1\n"
             "#define BUFFER_BINDING_LEB %i\n"
-            "#define BUFFER_BINDING_PARAMETERS %i\n",
+            "#define BUFFER_BINDING_PARAMETERS %i\n"
+            "#define TT_TEXTURES_PER_PAGE %li\n"
+            "#define TT_BUFFER_BINDING_INDIRECTION %i\n",
             TT__UPDATER_GL_BUFFER_LEB_GPU,
-            TT__UPDATER_GL_BUFFER_PARAMETERS);
+            TT__UPDATER_GL_BUFFER_PARAMETERS,
+            texturesPerPage,
+            TT__CACHE_GL_BUFFER_INDIRECTION);
 
     *program = glCreateShaderProgramv(GL_COMPUTE_SHADER,
                                       TT__BUFFER_SIZE(strings),
                                       strings);
 }
 
-static void tt__LoadUpdaterProgramMerge(GLuint *program)
-{
-    char header[256];
-    const char *strings[] = {
-        "#version 450\n",
-        header,
-        "#define FLAG_MERGE 1\n",
-        tt__LongestEdgeBisectionLibraryShaderSource(),
-        tt__LongestEdgeBisectionUpdateShaderSource()
-    };
+static void
+tt__LoadUpdaterProgramSplit(
+    GLuint *program,
+    int64_t texturesPerPage,
+    bool displace
+) {
+    tt__LoadUpdaterProgramSplitMerge(program,
+                                     "#define FLAG_SPLIT 1\n",
+                                     texturesPerPage,
+                                     displace);
+}
 
-    sprintf(header,
-            "#define BUFFER_BINDING_LEB %i\n"
-            "#define BUFFER_BINDING_PARAMETERS %i\n",
-            TT__UPDATER_GL_BUFFER_LEB_GPU,
-            TT__UPDATER_GL_BUFFER_PARAMETERS);
-
-    *program = glCreateShaderProgramv(GL_COMPUTE_SHADER,
-                                      TT__BUFFER_SIZE(strings),
-                                      strings);
+static void
+tt__LoadUpdaterProgramMerge(
+    GLuint *program,
+    int64_t texturesPerPage,
+    bool displace
+) {
+    tt__LoadUpdaterProgramSplitMerge(program,
+                                     "#define FLAG_MERGE 1\n",
+                                     texturesPerPage,
+                                     displace);
 }
 
 static void tt__LoadUpdaterProgramDispatch(GLuint *program)
@@ -1095,8 +1123,8 @@ static bool tt__LoadUpdaterPrograms(tt_Texture *tt)
     GLint areProgramsReady = GL_TRUE;
 
     tt__LoadUpdaterProgramDispatch(&programs[TT__UPDATER_GL_PROGRAM_DISPATCH]);
-    tt__LoadUpdaterProgramMerge(&programs[TT__UPDATER_GL_PROGRAM_MERGE]);
-    tt__LoadUpdaterProgramSplit(&programs[TT__UPDATER_GL_PROGRAM_SPLIT]);
+    tt__LoadUpdaterProgramMerge(&programs[TT__UPDATER_GL_PROGRAM_MERGE], tt_TexturesPerPage(tt), false);
+    tt__LoadUpdaterProgramSplit(&programs[TT__UPDATER_GL_PROGRAM_SPLIT], tt_TexturesPerPage(tt), false);
     tt__LoadUpdaterProgramReduction(&programs[TT__UPDATER_GL_PROGRAM_REDUCTION]);
     tt__LoadUpdaterProgramReductionPrepass(&programs[TT__UPDATER_GL_PROGRAM_REDUCTION_PREPASS]);
 
@@ -1135,6 +1163,19 @@ static void tt__ReleaseUpdaterPrograms(tt_Texture *tt)
             glDeleteProgram(tt->updater.gl.programs[i]);
 
     TT_FREE(tt->updater.gl.programs);
+}
+
+
+TTDEF void tt_Displace(tt_Texture *tt)
+{
+    GLuint *programs = tt->updater.gl.programs;
+
+    tt__LoadUpdaterProgramMerge(&programs[TT__UPDATER_GL_PROGRAM_MERGE],
+                                tt_TexturesPerPage(tt),
+                                true);
+    tt__LoadUpdaterProgramSplit(&programs[TT__UPDATER_GL_PROGRAM_SPLIT],
+                                tt_TexturesPerPage(tt),
+                                true);
 }
 
 
@@ -1369,6 +1410,12 @@ static void tt__RunSplitMergeKernel(tt_Texture *tt, const tt_UpdateArgs *args)
     int programID = TT__UPDATER_GL_PROGRAM_MERGE + tt->updater.splitOrMerge;
 
     tt__StreamParameters(tt, args);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__UPDATER_GL_BUFFER_LEB_GPU + 1,
+                     buffers[TT__CACHE_GL_BUFFER_LEB]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__CACHE_GL_BUFFER_INDIRECTION,
+                     buffers[TT__CACHE_GL_BUFFER_INDIRECTION]);
     glBindBufferBase(GL_UNIFORM_BUFFER,
                      TT__UPDATER_GL_BUFFER_PARAMETERS,
                      buffers[TT__UPDATER_GL_BUFFER_PARAMETERS]);
@@ -1380,6 +1427,12 @@ static void tt__RunSplitMergeKernel(tt_Texture *tt, const tt_UpdateArgs *args)
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
     glBindBufferBase(GL_UNIFORM_BUFFER,
                      TT__UPDATER_GL_BUFFER_PARAMETERS,
+                     0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__UPDATER_GL_BUFFER_LEB_GPU + 1,
+                     0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                     TT__CACHE_GL_BUFFER_INDIRECTION,
                      0);
 
     tt->updater.splitOrMerge = 1 - tt->updater.splitOrMerge;
@@ -1543,6 +1596,7 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 
     for (int64_t i = 0; i < tt_TexturesPerPage(tt); ++i) {
         GLint textureSize = 1 << tt->storage.header.textures[i].size;
+        TT_LOG("texSize: %i (%li / %li)", textureSize, i, tt_TexturesPerPage(tt));
         int64_t textureByteSize = tt_BytesPerPageTexture(tt, i);
         int64_t streamOffset = streamByteOffset + pageDataOffset;
         tt_Format textureFormat = tt_PageTextureFormat(tt, i);

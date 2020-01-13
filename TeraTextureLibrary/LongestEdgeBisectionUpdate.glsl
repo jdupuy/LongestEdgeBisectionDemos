@@ -57,6 +57,12 @@ vec4[3] DecodeTriangleVertices(in const leb_Node node)
     vec4 p2 = vec4(pos[0][1], pos[1][1], 0.0, 1.0);
     vec4 p3 = vec4(pos[0][2], pos[1][2], 0.0, 1.0);
 
+#if FLAG_DISPLACE
+    p1.z = tt_texture(TT_TEXTURES_PER_PAGE - 1, p1.xy).r;
+    p2.z = tt_texture(TT_TEXTURES_PER_PAGE - 1, p2.xy).r;
+    p3.z = tt_texture(TT_TEXTURES_PER_PAGE - 1, p3.xy).r;
+#endif
+
     return vec4[3](p1, p2, p3);
 }
 
@@ -96,6 +102,10 @@ bool FrustumCullingTest(in const vec4[3] patchVertices)
 {
     vec3 bmin = min(min(patchVertices[0].xyz, patchVertices[1].xyz), patchVertices[2].xyz);
     vec3 bmax = max(max(patchVertices[0].xyz, patchVertices[1].xyz), patchVertices[2].xyz);
+#   if FLAG_DISPLACE
+    bmin.z = 0.0f;
+    bmax.z = 1.0f;
+#   endif
 
     return FrustumCullingTest(bmin, bmax);
 }
