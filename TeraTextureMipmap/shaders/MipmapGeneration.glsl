@@ -1,5 +1,5 @@
 uniform uint u_NodeID;
-uniform sampler2DArray u_ChildrenSampler;
+uniform sampler2DArray u_NodeSampler;
 
 void squareToTriangle(inout vec2 p)
 {
@@ -45,21 +45,76 @@ layout(location = 0) in vec2 i_TexCoord;
 
 layout(location = 0) out vec4 o_FragColor;
 
+vec2 SplitLeft(vec2 u)
+{
+    return vec2(1.0f - u.x - u.y, u.y - u.x);
+}
+
+vec2 SplitRight(vec2 u)
+{
+    return vec2(u.x - u.y, 1.0f - u.x - u.y);
+}
+
+// express texCoords in left neighbor
+vec2 Left(vec2 u)
+{
+    return vec2(u.y, -u.x);
+}
+
+// express texCoords in right neighbor
+vec2 Right(vec2 u)
+{
+    return vec2(-u.y, u.x);
+}
+
+// express texCoords in edge neighbor
+vec2 Edge(vec2 u)
+{
+    return 1.0f - u;
+}
+
 void main()
 {
     vec2 u = i_TexCoord;
     squareToTriangle(u);
 
-    vec2 uvLeft  = vec2(1.0f - u.x - u.y, u.y - u.x);
-    vec2 uvRight = vec2(u.x - u.y, 1.0f - u.x - u.y);
+    // compute tex coords
+    vec2 uBaseLeft  = SplitLeft(u);
+    vec2 uBaseRight = SplitRight(u);
+    vec2 uEdgeLeft  = SplitLeft(Edge(u));
+    vec2 uEdgeRight = SplitRight(Edge(u));
+    vec2 uRightLeft = SplitLeft(Right(u));
+    vec2 uLeftRight = SplitRight(Left(u));
 
-    triangleToSquare(uvLeft);
-    triangleToSquare(uvRight);
+    triangleToSquare(uBaseLeft);
+    triangleToSquare(uBaseRight);
+    triangleToSquare(uEdgeLeft);
+    triangleToSquare(uEdgeRight);
+    triangleToSquare(uRightLeft);
+    triangleToSquare(uLeftRight);
 
-    vec4 textureLeft  = texture(u_ChildrenSampler, vec3(uvLeft, 0));
-    vec4 textureRight = texture(u_ChildrenSampler, vec3(uvRight, 1));
+    // fetch data
+    vec4 textureBaseLeft  = texture(u_NodeSampler, vec3(uBaseLeft, 0));
+    vec4 textureBaseRight = texture(u_NodeSampler, vec3(uBaseRight, 1));
+    vec4 textureEdgeLeft  = texture(u_NodeSampler, vec3(uEdgeLeft, 2));
+    vec4 textureEdgeRight = texture(u_NodeSampler, vec3(uEdgeRight, 3));
+    vec4 textureRightLeft = 0.0f * texture(u_NodeSampler, vec3(uRightLeft, 4));
+    vec4 textureLeftRight = 0.0f * texture(u_NodeSampler, vec3(uLeftRight, 5));
+    // fetch nrm
+    float nrm = texture(u_NodeSampler, vec3(uBaseLeft, 7)).r
+              + texture(u_NodeSampler, vec3(uBaseRight, 7)).r
+              + texture(u_NodeSampler, vec3(uEdgeLeft, 7)).r
+              + texture(u_NodeSampler, vec3(uEdgeRight, 7)).r
+              + 0.0f * texture(u_NodeSampler, vec3(uRightLeft, 7)).r
+              + 0.0f * texture(u_NodeSampler, vec3(uLeftRight, 7)).r;
 
-    o_FragColor = vec4(uvLeft, 0, 0);
-    o_FragColor = textureLeft + textureRight;
+    // export data
+    o_FragColor = textureBaseLeft
+                + textureBaseRight
+                + textureEdgeLeft
+                + textureEdgeRight
+                + textureRightLeft
+                + textureLeftRight;
+    o_FragColor/= nrm;
 }
 #endif

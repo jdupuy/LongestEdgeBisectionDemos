@@ -30,11 +30,23 @@
 #define LOG(fmt, ...)  fprintf(stdout, fmt, ##__VA_ARGS__); fflush(stdout);
 
 enum {
-    TEXTURE_PAGE_CHILDREN,
+    TEXTURE_PAGE_NODES,
     TEXTURE_PAGE_RAW,
     TEXTURE_PAGE,
 
     TEXTURE_COUNT
+};
+
+enum {
+    NODE_BASE_LEFT,
+    NODE_BASE_RIGHT,
+    NODE_EDGE_LEFT,
+    NODE_EDGE_RIGHT,
+    NODE_RIGHT_LEFT,
+    NODE_LEFT_RIGHT,
+    NODE_NULL,
+
+    NODE_COUNT
 };
 
 typedef struct {
@@ -175,14 +187,14 @@ GLuint LoadTexture(int textureID, GLenum internalFormat, int size)
     return texture;
 }
 
-GLuint LoadChildrenTexture(int textureID, GLenum internalFormat, int size)
+GLuint LoadNodesTexture(int textureID, GLenum internalFormat, int size)
 {
     GLuint texture;
 
     glActiveTexture(GL_TEXTURE0 + textureID);
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
-    glTexStorage3D(GL_TEXTURE_2D_ARRAY, size + 1, internalFormat, 1 << size, 1 << size, 2);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, size + 1, internalFormat, 1 << size, 1 << size, NODE_COUNT);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
@@ -235,7 +247,6 @@ GLuint LoadVertexArray()
 
 void Run(int argc, char **argv)
 {
-
     // load texture
     tt_Texture *tt = tt_Load("texture.tt", 16);
     // MIPmap texture
@@ -248,7 +259,7 @@ void Run(int argc, char **argv)
 
     glBindVertexArray(vertexArray);
     glUseProgram(program);
-    glUniform1i(glGetUniformLocation(program, "u_ChildrenSampler"), TEXTURE_PAGE_CHILDREN);
+    glUniform1i(glGetUniformLocation(program, "u_NodeSampler"), TEXTURE_PAGE_NODES);
 
     TT_LOG("Mipmapping %li textures", tt_TexturesPerPage(tt));
     for (int textureID = 0; textureID < tt_TexturesPerPage(tt); ++textureID) {
@@ -258,16 +269,16 @@ void Run(int argc, char **argv)
         int64_t bytesPerPage        = tt_BytesPerPage(tt);
         int64_t bytesPerPageTexture = tt_BytesPerPageTexture(tt, textureID);
         int64_t bytesPerPageTextureRaw = storage.bytesPerTexel * (1 << (2 * textureSize));
-        uint8_t *pageData       = (uint8_t *)malloc(2 * bytesPerPage);
+        uint8_t *pageData       = (uint8_t *)malloc(7 * bytesPerPage);
         uint8_t *textureData    = (uint8_t *)malloc(bytesPerPageTexture);
         uint8_t *textureRawData = (uint8_t *)malloc(bytesPerPageTextureRaw);
         GLuint textures[TEXTURE_COUNT], framebuffer;
 
 
         // load textures
-        textures[TEXTURE_PAGE_CHILDREN] = LoadChildrenTexture(TEXTURE_PAGE_CHILDREN,
-                                                              tt__PageTextureInternalFormat(tt, textureID),
-                                                              textureSize);
+        textures[TEXTURE_PAGE_NODES] = LoadNodesTexture(TEXTURE_PAGE_NODES,
+                                                        tt__PageTextureInternalFormat(tt, textureID),
+                                                        textureSize);
         textures[TEXTURE_PAGE] = LoadTexture(TEXTURE_PAGE,
                                              tt__PageTextureInternalFormat(tt, textureID),
                                              textureSize);
@@ -282,23 +293,67 @@ void Run(int argc, char **argv)
         glViewport(0, 0, 1 << textureSize, 1 << textureSize);
 
         // MIP depth
-        for (int64_t d = depth - 1; d >= 0; --d) {
-            TT_LOG("Processing MIP level %li", d);
-            int64_t minNodeID = 1 << d;
-            int64_t maxNodeID = 2 << d;
+        for (int64_t nodeDepth = depth - 1; nodeDepth >= 0; --nodeDepth) {
+            TT_LOG("Processing MIP level %li", nodeDepth);
+            int64_t minNodeID = 1 << nodeDepth;
+            int64_t maxNodeID = 2 << nodeDepth;
 
             // LEB nodes
             for (int64_t nodeID = minNodeID; nodeID < maxNodeID; ++nodeID) {
+                // compute neighbor data
+                leb_Node node = {(uint32_t)nodeID, (int32_t)nodeDepth};
+                leb_SameDepthNeighborIDs nodeNeighbors = leb_DecodeSameDepthNeighborIDs_Quad(node);
+
+                // load NULL node
+                fseek(tt->storage.stream, sizeof(tt__Header), SEEK_SET);
+                fread(pageData + 6 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+
                 // load left and right child page data
                 fseek(tt->storage.stream,
                       sizeof(tt__Header) + 2 * nodeID * bytesPerPage,
                       SEEK_SET);
-                fread(pageData, bytesPerPage, 2, tt->storage.stream);
+                fread(pageData + 0 * bytesPerPage, bytesPerPage, 2, tt->storage.stream);
+
+                // load longest edge neighbor
+                if (nodeNeighbors.edge > 0u) {
+                    fseek(tt->storage.stream,
+                          sizeof(tt__Header) + 2 * nodeNeighbors.edge * bytesPerPage,
+                          SEEK_SET);
+                    fread(pageData + 2 * bytesPerPage, bytesPerPage, 2, tt->storage.stream);
+                } else {
+                    fseek(tt->storage.stream, sizeof(tt__Header), SEEK_SET);
+                    fread(pageData + 2 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+                    fread(pageData + 3 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+                }
+#if 0
+                // load right-left
+                if (nodeNeighbors.right > 0) {
+                    fseek(tt->storage.stream,
+                          sizeof(tt__Header) + 2 * nodeNeighbors.right * bytesPerPage,
+                          SEEK_SET);
+                    fread(pageData + 4 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+                } else {
+                    fseek(tt->storage.stream, sizeof(tt__Header), SEEK_SET);
+                    fread(pageData + 4 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+                }
+
+                // load left-right
+                if (nodeNeighbors.left > 0) {
+                    fseek(tt->storage.stream,
+                          sizeof(tt__Header) + (2 * nodeNeighbors.left + 1 )* bytesPerPage,
+                          SEEK_SET);
+                    fread(pageData + 5 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+                } else {
+                    fseek(tt->storage.stream, sizeof(tt__Header), SEEK_SET);
+                    fread(pageData + 5 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
+                }
+#endif
+
 
                 // upload page data to GPU
                 if (textureFormat >= TT_FORMAT_BC1) {
-                    for (int i = 0; i < 2; ++i) {
-                        glCompressedTextureSubImage3D(textures[TEXTURE_PAGE_CHILDREN],
+                    for (int i = 0; i < NODE_COUNT; ++i) {
+                        glCompressedTextureSubImage3D(textures[TEXTURE_PAGE_NODES],
                                                       0,
                                                       0, 0, i,
                                                       1 << textureSize,
@@ -312,23 +367,23 @@ void Run(int argc, char **argv)
                     GLenum format, type;
 
                     switch (textureFormat) {
-                    case TT_FORMAT_R8: format = GL_RED; type = GL_UNSIGNED_BYTE; break;
-                    case TT_FORMAT_R16: format = GL_RED; type = GL_UNSIGNED_SHORT; break;
-                    case TT_FORMAT_R16F: format = GL_RED; type = GL_HALF_FLOAT; break;
-                    case TT_FORMAT_R32F: format = GL_RED; type = GL_FLOAT; break;
-                    case TT_FORMAT_RG8: format = GL_RG; type = GL_UNSIGNED_BYTE; break;
-                    case TT_FORMAT_RG16: format = GL_RG; type = GL_UNSIGNED_SHORT; break;
-                    case TT_FORMAT_RG16F: format = GL_RG; type = GL_HALF_FLOAT; break;
-                    case TT_FORMAT_RG32F: format = GL_RG; type = GL_FLOAT; break;
-                    case TT_FORMAT_RGBA8: format = GL_RGBA; type = GL_UNSIGNED_BYTE; break;
-                    case TT_FORMAT_RGBA16: format = GL_RGBA; type = GL_UNSIGNED_SHORT; break;
-                    case TT_FORMAT_RGBA16F: format = GL_RGBA; type = GL_HALF_FLOAT; break;
-                    case TT_FORMAT_RGBA32F: format = GL_RGBA; type = GL_FLOAT; break;
+                    case TT_FORMAT_R8:      format = GL_RED;    type = GL_UNSIGNED_BYTE;    break;
+                    case TT_FORMAT_R16:     format = GL_RED;    type = GL_UNSIGNED_SHORT;   break;
+                    case TT_FORMAT_R16F:    format = GL_RED;    type = GL_HALF_FLOAT;       break;
+                    case TT_FORMAT_R32F:    format = GL_RED;    type = GL_FLOAT;            break;
+                    case TT_FORMAT_RG8:     format = GL_RG;     type = GL_UNSIGNED_BYTE;    break;
+                    case TT_FORMAT_RG16:    format = GL_RG;     type = GL_UNSIGNED_SHORT;   break;
+                    case TT_FORMAT_RG16F:   format = GL_RG;     type = GL_HALF_FLOAT;       break;
+                    case TT_FORMAT_RG32F:   format = GL_RG;     type = GL_FLOAT;            break;
+                    case TT_FORMAT_RGBA8:   format = GL_RGBA;   type = GL_UNSIGNED_BYTE;    break;
+                    case TT_FORMAT_RGBA16:  format = GL_RGBA;   type = GL_UNSIGNED_SHORT;   break;
+                    case TT_FORMAT_RGBA16F: format = GL_RGBA;   type = GL_HALF_FLOAT;       break;
+                    case TT_FORMAT_RGBA32F: format = GL_RGBA;   type = GL_FLOAT;            break;
                     default: break;
                     }
 
-                    for (int i = 0; i < 2; ++i) {
-                        glTextureSubImage3D(textures[TEXTURE_PAGE_CHILDREN],
+                    for (int i = 0; i < NODE_COUNT; ++i) {
+                        glTextureSubImage3D(textures[TEXTURE_PAGE_NODES],
                                             0,
                                             0, 0, i,
                                             1 << textureSize,
@@ -340,20 +395,27 @@ void Run(int argc, char **argv)
                     }
                 }
 
-                glGenerateTextureMipmap(textures[TEXTURE_PAGE_CHILDREN]);
+                glGenerateTextureMipmap(textures[TEXTURE_PAGE_NODES]);
 
                 // execute Kernel
                 glUniform1ui(glGetUniformLocation(program, "u_NodeID"), nodeID);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
                 // compress page data on the GPU
-                glGetTextureImage(textures[TEXTURE_PAGE_RAW],
-                                  0, storage.format, storage.type,
-                                  bytesPerPageTextureRaw, textureRawData);
-                glTextureSubImage2D(textures[TEXTURE_PAGE],
-                                    0, 0, 0, 1 << textureSize, 1 << textureSize,
-                                    storage.format, storage.type, textureRawData);
-                glGetCompressedTextureImage(textures[TEXTURE_PAGE], 0, bytesPerPageTexture, textureData);
+                if (textureFormat >= TT_FORMAT_BC1) {
+                    glGetTextureImage(textures[TEXTURE_PAGE_RAW],
+                                      0, storage.format, storage.type,
+                                      bytesPerPageTextureRaw, textureRawData);
+                    glTextureSubImage2D(textures[TEXTURE_PAGE],
+                                        0, 0, 0, 1 << textureSize, 1 << textureSize,
+                                        storage.format, storage.type, textureRawData);
+                    glGetCompressedTextureImage(textures[TEXTURE_PAGE], 0, bytesPerPageTexture, textureData);
+                } else {
+                    glGetTextureImage(textures[TEXTURE_PAGE_RAW],
+                                      0, storage.format, storage.type,
+                                      bytesPerPageTextureRaw, textureData);
+                    assert(bytesPerPageTextureRaw == bytesPerPageTexture);
+                }
 
                 // write compressed data to disk
                 fseek(tt->storage.stream,
@@ -364,7 +426,6 @@ void Run(int argc, char **argv)
         }
 
         pageTextureByteOffset+= bytesPerPageTexture;
-        TT_LOG("%li (%li)", tt_BytesPerPageTexture(tt, 0) + tt_BytesPerPageTexture(tt, 1), bytesPerPage);
 
         // cleanup
         glDeleteTextures(TEXTURE_COUNT, textures);
