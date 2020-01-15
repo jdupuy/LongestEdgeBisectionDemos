@@ -1596,7 +1596,6 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
 
     for (int64_t i = 0; i < tt_TexturesPerPage(tt); ++i) {
         GLint textureSize = 1 << tt->storage.header.textures[i].size;
-        TT_LOG("texSize: %i (%li / %li)", textureSize, i, tt_TexturesPerPage(tt));
         int64_t textureByteSize = tt_BytesPerPageTexture(tt, i);
         int64_t streamOffset = streamByteOffset + pageDataOffset;
         tt_Format textureFormat = tt_PageTextureFormat(tt, i);

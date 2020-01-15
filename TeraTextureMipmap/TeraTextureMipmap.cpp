@@ -248,9 +248,7 @@ GLuint LoadVertexArray()
 void Run(int argc, char **argv)
 {
     // load texture
-    tt_Texture *tt = tt_Load("texture.tt", 16);
-    // MIPmap texture
-    int depth = tt->storage.header.depth - 1;
+    tt_Texture *tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", 16);
 
     GLuint vertexArray = LoadVertexArray();
     GLuint program = LoadGenerationProgram();
@@ -293,13 +291,14 @@ void Run(int argc, char **argv)
         glViewport(0, 0, 1 << textureSize, 1 << textureSize);
 
         // MIP depth
-        for (int64_t nodeDepth = depth - 1; nodeDepth >= 0; --nodeDepth) {
+        for (int64_t nodeDepth = tt->storage.header.depth - 1; nodeDepth >= 1; --nodeDepth) {
             TT_LOG("Processing MIP level %li", nodeDepth);
             int64_t minNodeID = 1 << nodeDepth;
             int64_t maxNodeID = 2 << nodeDepth;
 
             // LEB nodes
-            for (int64_t nodeID = minNodeID; nodeID < maxNodeID; ++nodeID) {
+            for (int64_t nodeID = maxNodeID - 1; nodeID >= minNodeID; --nodeID) {
+                TT_LOG("-- Processing Page %li", nodeID);
                 // compute neighbor data
                 leb_Node node = {(uint32_t)nodeID, (int32_t)nodeDepth};
                 leb_SameDepthNeighborIDs nodeNeighbors = leb_DecodeSameDepthNeighborIDs_Quad(node);
@@ -348,7 +347,6 @@ void Run(int argc, char **argv)
                     fread(pageData + 5 * bytesPerPage, bytesPerPage, 1, tt->storage.stream);
                 }
 #endif
-
 
                 // upload page data to GPU
                 if (textureFormat >= TT_FORMAT_BC1) {

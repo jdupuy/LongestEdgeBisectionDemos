@@ -96,7 +96,7 @@ void main()
         TT_Texel texel = TT_TextureFetch(uv);
 
         o_Albedo = vec4(texel.albedo, 1.0);
-        o_Displacement = texel.altitude / 1600.0f;
+        o_Displacement = texel.altitude / 1600.0f * 25.0f;
         o_Normal = SlopeToSquare(texel.slope);
     } else /* NULL node */{
         o_Albedo = vec4(1.0);

@@ -56,6 +56,75 @@ char *strcat2(char *dst, const char *src1, const char *src2)
     return strcat(dst, src2);
 }
 
+float Erf(float x)
+{
+    // Save the sign of x
+    int sign = 1;
+    if (x < 0)
+        sign = -1;
+    x = fabs(x);
+
+    // A&S formula 7.1.26
+    float t = 1.0f / (1.0f + 0.3275911f * x);
+    float y = 1.0f - (((((1.061405429f * t + -1.453152027f) * t) + 1.421413741f)
+        * t + -0.284496736f) * t + 0.254829592f) * t * exp(-x * x);
+
+    return sign * y;
+}
+
+float ErfInv(float x)
+{
+    float w, p;
+    w = -log((1.0f - x) * (1.0f + x));
+    if (w < 5.000000f)
+    {
+        w = w - 2.500000f;
+        p = 2.81022636e-08f;
+        p = 3.43273939e-07f + p * w;
+        p = -3.5233877e-06f + p * w;
+        p = -4.39150654e-06f + p * w;
+        p = 0.00021858087f + p * w;
+        p = -0.00125372503f + p * w;
+        p = -0.00417768164f + p * w;
+        p = 0.246640727f + p * w;
+        p = 1.50140941f + p * w;
+    }
+    else
+    {
+        w = sqrt(w) - 3.000000f;
+        p = -0.000200214257f;
+        p = 0.000100950558f + p * w;
+        p = 0.00134934322f + p * w;
+        p = -0.00367342844f + p * w;
+        p = 0.00573950773f + p * w;
+        p = -0.0076224613f + p * w;
+        p = 0.00943887047f + p * w;
+        p = 1.00167406f + p * w;
+        p = 2.83297682f + p * w;
+    }
+    return p * x;
+}
+
+float UniformToGaussianStd(float u)
+{
+    return ErfInv(2.0f * u - 1.0f);
+}
+
+float UniformToGaussian(float u, float sigma)
+{
+    return UniformToGaussianStd(u) * sigma;
+}
+
+float GaussianStdToUniform(float x)
+{
+    return 0.5f * (1.0f + Erf(x));
+}
+
+float GaussianToUniform(float x, float sigma)
+{
+    return GaussianStdToUniform(x / sigma);
+}
+
 // -----------------------------------------------------------------------------
 struct AppManager {
     struct {
@@ -67,9 +136,9 @@ struct AppManager {
 };
 
 enum {
-    DETAIL_MAP_SAND,
     DETAIL_MAP_GRASS,
     DETAIL_MAP_ROCK,
+    DETAIL_MAP_SAND,
     DETAIL_MAP_COUNT
 };
 
@@ -88,7 +157,7 @@ struct TextureGenerator {
         int size, pageSize;
     } output;
 } g_textureGenerator = {
-    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f, 52660.0f, -14.0f, 1587.0f},
+    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f/25.0f, 52660.0f/25.0f, -14.0f/25.0f, 1587.0f/25.0f},
     {
         {
             PATH_TO_ASSET_DIRECTORY "./sand_01_bump_4k.jpg",
@@ -119,13 +188,17 @@ struct TextureViewer {
 enum {
     TEXTURE_DMAP_TERRAIN,
 
-    TEXTURE_DMAP_SAND,
     TEXTURE_DMAP_GRASS,
     TEXTURE_DMAP_ROCK,
-    TEXTURE_AMAP_SAND,
+    TEXTURE_DMAP_SAND,
     TEXTURE_AMAP_GRASS,
     TEXTURE_AMAP_ROCK,
-
+    TEXTURE_AMAP_SAND,
+#if 0
+    TEXTURE_GRASS_GAUSSIAN, TEXTURE_GRASS_LUT,
+    TEXTURE_ROCK_GAUSSIAN , TEXTURE_ROCK_LUT,
+    TEXTURE_SAND_GAUSSIAN , TEXTURE_SAND_LUT,
+#endif
     TEXTURE_COUNT
 };
 
@@ -151,27 +224,139 @@ struct OpenGLManager {
 // load detail maps
 void LoadDetailDataTextures()
 {
+#if 1
     glGenTextures(DETAIL_MAP_COUNT, &g_gl.textures[TEXTURE_DMAP_ROCK]);
     for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
         LOG("Loading {Dmap-Detail-Texture}\n");
-        GLuint *glt = &g_gl.textures[TEXTURE_DMAP_SAND + i];
+        GLuint *glt = &g_gl.textures[TEXTURE_DMAP_GRASS + i];
         djg_texture *djt = djgt_create(0);
         djgt_push_image_u8(djt, g_textureGenerator.detailsMaps[i].pathToDmap, true);
-        glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_SAND + i);
+        glActiveTexture(GL_TEXTURE0 + TEXTURE_DMAP_GRASS + i);
         djgt_to_gl(djt, GL_TEXTURE_2D, GL_R8, true, true, glt);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         djgt_release(djt);
     }
     for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
         LOG("Loading {Amap-Detail-Texture}\n");
-        GLuint *glt = &g_gl.textures[TEXTURE_AMAP_SAND + i];
+        GLuint *glt = &g_gl.textures[TEXTURE_AMAP_GRASS + i];
         djg_texture *djt = djgt_create(0);
         djgt_push_image_u8(djt, g_textureGenerator.detailsMaps[i].pathToAmap, true);
-        glActiveTexture(GL_TEXTURE0 + TEXTURE_AMAP_SAND + i);
+        glActiveTexture(GL_TEXTURE0 + TEXTURE_AMAP_GRASS + i);
         djgt_to_gl(djt, GL_TEXTURE_2D, GL_RGBA8, true, true, glt);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         djgt_release(djt);
     }
+#else
+    for (int i = 0; i < DETAIL_MAP_COUNT; ++i) {
+        LOG("Loading {Dmap-Detail-Texture}\n");
+        djg_texture *amap = djgt_create(0),
+                    *dmap = djgt_create(0);
+        int width, height;
+        std::vector<float> texture, invLut(256 * 4, 0.0f);
+
+        // load assets using STB
+        djgt_push_image_u8(amap, g_textureGenerator.detailsMaps[i].pathToAmap, true);
+        djgt_push_image_u8(dmap, g_textureGenerator.detailsMaps[i].pathToDmap, true);
+
+        // get image resolutions
+        width   = amap->next->x;
+        height  = amap->next->y;
+        texture.resize(width * height * 4);
+
+        // prepare input
+        for (int channel = 0; channel < 4; ++channel) {
+            std::vector<uint16_t> histogram(256, 0u);
+            std::vector<float> lut(256, 0.0f);
+
+            // compute histogram
+            for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x) {
+                uint8_t color;
+                int tmp = x + width * y;
+
+                if (channel < 3)
+                    color = amap->next->texels[channel + 3 * tmp];
+                else
+                    color = dmap->next->texels[tmp];
+
+                ++histogram[color];
+            }
+
+            // compute CDF
+            float sum = 0.0f;
+            for (size_t i = 0; i < lut.size(); ++i) {
+                sum+= histogram[i];
+                lut[i] = sum;
+            }
+            for (size_t i = 0; i < lut.size(); ++i) {
+                lut[i]/= sum;
+            }
+
+            // Gaussianize texture
+            for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x) {
+                uint8_t color;
+                int tmp = x + width * y;
+
+                if (channel < 3)
+                    color = amap->next->texels[channel + 3 * tmp];
+                else
+                    color = dmap->next->texels[tmp];
+
+                texture[channel + 4 * (x + width * y)] =
+                    UniformToGaussian(lut[color], 0.11785113f);
+            }
+
+            // invert LUT
+            for (int i = 0; i < 256; ++i) {
+                float u = (float)i / 256.0f;
+                int idx = 128, S = 0;
+
+                // find inverse via bisection
+                for (int j = 7; j >= 0; ++j) {
+                    if (u < lut[idx]) {
+                        S = -1;
+                    } else {
+                        S = +1;
+                    }
+                    idx+= std::max(0, std::min(255, S * (1 << j)));
+                }
+
+                //
+            }
+        }
+
+        glGenTextures(2, &g_gl.textures[TEXTURE_GRASS_GAUSSIAN + 2 * i]);
+        glActiveTexture(TEXTURE_GRASS_GAUSSIAN + 2 * i);
+        glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_GRASS_GAUSSIAN + 2 * i]);
+        glTexStorage2D(GL_TEXTURE_2D,
+                       djgt__mipcnt(width, height, 0),
+                       GL_RGBA8,
+                       width, height);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_FLOAT, &Tinput.data[0]);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+        glActiveTexture(TEXTURE_GRASS_LUT + 2 * i);
+        glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_GRASS_LUT + 2 * i]);
+        glTexStorage2D(GL_TEXTURE_2D,
+                       1,
+                       GL_RGBA8,
+                       width, height);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_FLOAT, &lut.data[0]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        // cleanup
+        djgt_release(albedo);
+        djgt_release(displace);
+    }
+#endif
 }
 
 // load input displacement map
@@ -285,14 +470,14 @@ void LoadPreviewProgram()
     glUseProgram(*glp);
     {
         GLint albedoLocations[] = {
-            TEXTURE_AMAP_SAND,
             TEXTURE_AMAP_GRASS,
-            TEXTURE_AMAP_ROCK
+            TEXTURE_AMAP_ROCK,
+            TEXTURE_AMAP_SAND
         };
         GLint displacementLocations[] = {
-            TEXTURE_DMAP_SAND,
             TEXTURE_DMAP_GRASS,
-            TEXTURE_DMAP_ROCK
+            TEXTURE_DMAP_ROCK,
+            TEXTURE_DMAP_SAND
         };
         glUniform1i(glGetUniformLocation(*glp, "TT_TerrainDisplacementSampler"),
                     TEXTURE_DMAP_TERRAIN);
@@ -499,14 +684,14 @@ GLuint LoadGenerationProgram()
     glUseProgram(program);
     {
         GLint albedoLocations[] = {
-            TEXTURE_AMAP_SAND,
             TEXTURE_AMAP_GRASS,
-            TEXTURE_AMAP_ROCK
+            TEXTURE_AMAP_ROCK,
+            TEXTURE_AMAP_SAND
         };
         GLint displacementLocations[] = {
-            TEXTURE_DMAP_SAND,
             TEXTURE_DMAP_GRASS,
-            TEXTURE_DMAP_ROCK
+            TEXTURE_DMAP_ROCK,
+            TEXTURE_DMAP_SAND
         };
         glUniform1i(glGetUniformLocation(program, "TT_TerrainDisplacementSampler"),
                     TEXTURE_DMAP_TERRAIN);
@@ -559,12 +744,12 @@ void ExportTexture()
 
     // create the tt_Texture file
     TT_LOG("Creating texture file...");
-    int64_t pageResolutions[] = {pageRes, pageRes, pageRes - 2};
+    int64_t pageResolutions[] = {pageRes, pageRes, pageRes - 1};
     tt_Format formats[]   = {/*albedo*/TT_FORMAT_BC1,
                              /*normals*/TT_FORMAT_BC5,
                              /*displacement*/TT_FORMAT_R16};
-    tt_CreateLayered("texture.tt", textureRes, 3, pageResolutions, formats);
-    tt = tt_Load("texture.tt", /* cache (not important here) */16);
+    tt_CreateLayered("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", textureRes, 3, pageResolutions, formats);
+    tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", /* cache (not important here) */16);
 
     // allocate memory for raw data
     rawTextureData.albedo.byteSize          = (1 << (2 * pageResolutions[0])) * /* RGBA8 */4;
@@ -589,14 +774,14 @@ void ExportTexture()
     glViewport(0, 0, 1 << pageRes, 1 << pageRes);
     glUseProgram(program);
     glBindVertexArray(g_gl.vertexArray);
-    for (int64_t i = 0; i < (2 << tt->storage.header.depth); ++i) {
-        TT_LOG("Generating page %li / %i", i + 1, (2 << tt->storage.header.depth));
+    for (int64_t nodeID = 0; nodeID < (2 << tt->storage.header.depth); ++nodeID) {
+        TT_LOG("Generating page %li / %i", nodeID, (2 << tt->storage.header.depth) - 1);
         int64_t pageSize = textureData.albedo.byteSize
                          + textureData.normal.byteSize
                          + rawTextureData.displacement.byteSize;
 
         // write to raw data
-        glUniform1ui(glGetUniformLocation(program, "u_NodeID"), i);
+        glUniform1ui(glGetUniformLocation(program, "u_NodeID"), nodeID);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glGenerateTextureMipmap(textures[TEXTURE_EXPORT_PAGE_ALBEDO_RAW]);
         glGenerateTextureMipmap(textures[TEXTURE_EXPORT_PAGE_DISPLACEMENT]);
@@ -635,7 +820,7 @@ void ExportTexture()
 
         // write compressed data to disk
         fseek(tt->storage.stream,
-              sizeof(tt__Header) + (uint64_t)pageSize * (uint64_t)i,
+              sizeof(tt__Header) + (uint64_t)pageSize * (uint64_t)nodeID,
               SEEK_SET);
         fwrite(textureData.albedo.data,
                textureData.albedo.byteSize,
@@ -646,6 +831,10 @@ void ExportTexture()
         fwrite(rawTextureData.displacement.data,
                rawTextureData.displacement.byteSize,
                1, tt->storage.stream);
+
+        // create null node then move to ceil nodes
+        if (nodeID == 0)
+            nodeID+= (1 << tt->storage.header.depth) - 1;
     }
     glBindVertexArray(0);
     glUseProgram(0);

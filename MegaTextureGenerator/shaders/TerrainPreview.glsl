@@ -27,10 +27,12 @@ void main()
     o_FragColor = vec4(t.slope, 0, 1);
 
     o_FragColor = vec4(vec3(mod(t.altitude, 0.5f)) * 2.0f, 1);
-    o_FragColor = vec4(t.albedo * clamp(dot(normal, Li), 0.0f, 1.0f), 1);
 
     float curvature = TT__TerrainCurvature(P, 200.0f);
+    o_FragColor = vec4(t.altitude, 1*normal.xy, 1);
+    o_FragColor = vec4(t.altitude / 1600.0f * 25.0f, 0.0, 0.0f, 1);
     o_FragColor = vec4(normal, 1);
+    o_FragColor = vec4(t.albedo * clamp(dot(normal, Li), 0.0f, 1.0f), 1);
     //o_FragColor*= abs(curvature) / 1e-7;
 }
 #endif
