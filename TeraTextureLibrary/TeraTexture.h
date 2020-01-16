@@ -63,6 +63,7 @@ TTDEF void tt_Release(tt_Texture *tt);
 
 // queries
 TTDEF int64_t tt_MaxTexturesPerPage();
+TTDEF int64_t tt_TextureSize(const tt_Texture *tt);
 TTDEF int64_t tt_StorageSize(const tt_Texture *tt);
 TTDEF int64_t tt_PageCount(const tt_Texture *tt);
 TTDEF int64_t tt_TexturesPerPage(const tt_Texture *tt);
@@ -258,6 +259,15 @@ static int64_t tt__Magic()
 static int32_t tt__SizeToLebDepth(int32_t textureSize, int32_t pageSize)
 {
     return 2 * (textureSize - pageSize) + 1;
+}
+
+
+TTDEF int64_t tt_TextureSize(const tt_Texture *tt)
+{
+    int64_t lebDepth = tt->storage.header.depth;
+    int64_t pageSize = tt->storage.header.textures[0].size;
+
+    return  pageSize + ((lebDepth - 1) >> 1);
 }
 
 
