@@ -20,6 +20,7 @@ readonly buffer NodeBuffer {
 #ifdef VERTEX_SHADER
 layout(location = 0) in vec2 i_VertexPos;
 layout(location = 0) out vec2 o_TexCoord;
+layout(location = 1) out vec4 o_WorldPos;
 
 void main()
 {
@@ -58,6 +59,7 @@ void main()
     // set varyings
     gl_Position = attrib.position;
     o_TexCoord  = attrib.texCoord;
+    o_WorldPos  = attrib.worldPos;
 }
 #endif
 
@@ -68,10 +70,11 @@ void main()
  */
 #ifdef FRAGMENT_SHADER
 layout(location = 0) in vec2 i_TexCoord;
+layout(location = 1) in vec4 i_WorldPos;
 layout(location = 0) out vec4 o_FragColor;
 
 void main()
 {
-    o_FragColor = ShadeFragment(i_TexCoord);
+    o_FragColor = ShadeFragment(i_TexCoord, i_WorldPos.xyz);
 }
 #endif

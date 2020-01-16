@@ -7,9 +7,15 @@ layout(std140, column_major, binding = BUFFER_BINDING_TERRAIN_VARIABLES)
 uniform PerFrameVariables {
     mat4 u_ModelViewMatrix;
     mat4 u_ModelViewProjectionMatrix;
+    mat4 u_CameraMatrix;
+    mat4 u_ViewProjectionInverseMatrix;
     vec4 u_FrustumPlanes[6];
 };
 
+// Bruneton atmosphere's input
+uniform vec3 u_SunDir = vec3(0, 0, 1);
+
+// misc
 uniform float u_TargetEdgeLength;
 uniform float u_LodFactor;
 #if FLAG_DISPLACE
@@ -33,9 +39,9 @@ vec4[3] DecodeTriangleVertices(in const leb_Node node)
     vec4 p3 = vec4(pos[0][2], pos[1][2], 0.0, 1.0);
 
 #if FLAG_DISPLACE
-    p1.z = u_DmapFactor * texture(u_DmapSampler, p1.xy).r;
-    p2.z = u_DmapFactor * texture(u_DmapSampler, p2.xy).r;
-    p3.z = u_DmapFactor * texture(u_DmapSampler, p3.xy).r;
+    p1.z = tt_texture(2, p1.xy).r;
+    p2.z = tt_texture(2, p2.xy).r;
+    p3.z = tt_texture(2, p3.xy).r;
 #endif
 
     return vec4[3](p1, p2, p3);
@@ -201,12 +207,6 @@ vec2 LevelOfDetail(in const vec4[3] patchVertices)
         return vec2(0.0f, 1.0f);
 #endif
 
-#   if FLAG_DISPLACE
-    // variance test
-    if (!DisplacementVarianceTest(patchVertices))
-        return vec2(0.0f, 1.0f);
-#endif
-
     // compute triangle LOD
     return vec2(TriangleLevelOfDetail(patchVertices), 1.0f);
 }
@@ -234,6 +234,7 @@ vec4 BarycentricInterpolation(in vec4 v[3], in vec2 u)
 struct ClipSpaceAttribute {
     vec4 position;
     vec2 texCoord;
+    vec4 worldPos;
 };
 
 ClipSpaceAttribute TessellateClipSpaceTriangle(
@@ -254,7 +255,10 @@ ClipSpaceAttribute TessellateClipSpaceTriangle(
     position+= upDir * z;
 #endif
 
-    return ClipSpaceAttribute(position, texCoord);
+    vec4 worldPos = (u_ViewProjectionInverseMatrix * position);
+    worldPos/= worldPos.w;
+
+    return ClipSpaceAttribute(position, texCoord, worldPos);
 }
 
 
@@ -300,7 +304,7 @@ vec3 DecompressNormal(vec2 textureData)
  *
  */
 #ifdef FRAGMENT_SHADER
-vec4 ShadeFragment(vec2 texCoord)
+vec4 ShadeFragment(vec2 texCoord, vec3 worldPos = vec3(0))
 {
     const float pi = 3.14159265359f;
 #if FLAG_DISPLACE
@@ -320,11 +324,21 @@ vec4 ShadeFragment(vec2 texCoord)
 #elif SHADING_DIFFUSE
     vec2 P = texCoord;
     vec3 albedo = tt_texture(0, P).rgb;
-    vec3 wi = normalize(vec3(0, 0, 1));
+    vec3 wi = vec3(+u_SunDir.x, -u_SunDir.z, +u_SunDir.y); // sunDir in tangent space
     vec3 wn = DecompressNormal(tt_texture(1, P).rg);
-    //return tt_texture(2, P).rgba;
+    vec3 shading = clamp(dot(wi, wn), 0.0, 1.0) / pi * albedo;
+    vec3 sunDir = u_SunDir.zxy;
+    vec3 camPos = u_CameraMatrix[3].xyz;
+    vec3 viewRay = worldPos - camPos;
+    float depth = length(viewRay);
+    vec3 attenuation = exp(-betaR * depth * 400.0f);
+    vec3 extinction;
+    vec3 inscatter = inScattering(camPos.zxy + earthPos,
+                                  worldPos.zxy + earthPos,
+                                  u_SunDir.zxy,
+                                  extinction);
 
-    return vec4(vec3(clamp(dot(wi, wn), 0.0, 1.0) / pi) * albedo * 2.0, 1);
+    return vec4(shading * extinction + inscatter, 1);
 #elif SHADING_NORMALS
 
     return vec4(abs(n), 1);

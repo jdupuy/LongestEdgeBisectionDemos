@@ -97,7 +97,7 @@ struct CameraManager {
 } g_camera = {
     80.f, 0.01f, 32000.f,
     PROJECTION_RECTILINEAR,
-    TONEMAP_RAW,
+    TONEMAP_FILMIC,
     INIT_POS,
     dja::mat3(1.0f),
     -0.8f, -0.4f
@@ -116,6 +116,7 @@ void updateCameraMatrix()
         -s1    , c1 * s2, c1 * c2
     );
 }
+
 
 // -----------------------------------------------------------------------------
 // Terrain Manager
@@ -149,6 +150,14 @@ struct TerrainManager {
     0.1f,
     24,
     8.0f
+};
+
+// -----------------------------------------------------------------------------
+// Lighting Manager
+struct {
+    struct {float theta, phi;} sun;
+} g_lighting = {
+    {0.0f, 0.0f}
 };
 
 // -----------------------------------------------------------------------------
@@ -240,8 +249,10 @@ enum {
 enum {
     TEXTURE_CBUF,
     TEXTURE_ZBUF,
-    TEXTURE_DMAP,
-    TEXTURE_SMAP,
+    TEXTURE_ATMOSPHERE_IRRADIANCE,
+    TEXTURE_ATMOSPHERE_INSCATTER,
+    TEXTURE_ATMOSPHERE_TRANSMITTANCE,
+
     TEXTURE_COUNT
 };
 enum {
@@ -253,6 +264,7 @@ enum {
     PROGRAM_LEB_REDUCTION,
     PROGRAM_LEB_REDUCTION_PREPASS,
     PROGRAM_BATCH,
+    PROGRAM_SKY,
     PROGRAM_COUNT
 };
 enum {
@@ -266,6 +278,10 @@ enum {
     UNIFORM_TERRAIN_LOD_FACTOR,
     UNIFORM_TERRAIN_MIN_LOD_VARIANCE,
     UNIFORM_TERRAIN_SCREEN_RESOLUTION,
+    UNIFORM_TERRAIN_INSCATTER_SAMPLER,
+    UNIFORM_TERRAIN_IRRADIANCE_SAMPLER,
+    UNIFORM_TERRAIN_TRANSMITTANCE_SAMPLER,
+    UNIFORM_TERRAIN_SUN_DIR,
 
     UNIFORM_SPLIT_DMAP_SAMPLER,
     UNIFORM_SPLIT_SMAP_SAMPLER,
@@ -274,6 +290,10 @@ enum {
     UNIFORM_SPLIT_LOD_FACTOR,
     UNIFORM_SPLIT_MIN_LOD_VARIANCE,
     UNIFORM_SPLIT_SCREEN_RESOLUTION,
+    UNIFORM_SPLIT_INSCATTER_SAMPLER,
+    UNIFORM_SPLIT_IRRADIANCE_SAMPLER,
+    UNIFORM_SPLIT_TRANSMITTANCE_SAMPLER,
+    UNIFORM_SPLIT_SUN_DIR,
 
     UNIFORM_MERGE_DMAP_SAMPLER,
     UNIFORM_MERGE_SMAP_SAMPLER,
@@ -282,6 +302,10 @@ enum {
     UNIFORM_MERGE_LOD_FACTOR,
     UNIFORM_MERGE_MIN_LOD_VARIANCE,
     UNIFORM_MERGE_SCREEN_RESOLUTION,
+    UNIFORM_MERGE_INSCATTER_SAMPLER,
+    UNIFORM_MERGE_IRRADIANCE_SAMPLER,
+    UNIFORM_MERGE_TRANSMITTANCE_SAMPLER,
+    UNIFORM_MERGE_SUN_DIR,
 
     UNIFORM_RENDER_DMAP_SAMPLER,
     UNIFORM_RENDER_SMAP_SAMPLER,
@@ -290,9 +314,21 @@ enum {
     UNIFORM_RENDER_LOD_FACTOR,
     UNIFORM_RENDER_MIN_LOD_VARIANCE,
     UNIFORM_RENDER_SCREEN_RESOLUTION,
+    UNIFORM_RENDER_INSCATTER_SAMPLER,
+    UNIFORM_RENDER_IRRADIANCE_SAMPLER,
+    UNIFORM_RENDER_TRANSMITTANCE_SAMPLER,
+    UNIFORM_RENDER_SUN_DIR,
 
     UNIFORM_TOPVIEW_DMAP_SAMPLER,
     UNIFORM_TOPVIEW_DMAP_FACTOR,
+
+    UNIFORM_SKY_PROJECTION_MATRIX,
+    UNIFORM_SKY_INVVIEW_MATRIX,
+    UNIFORM_SKY_SUN_DIR,
+    UNIFORM_SKY_FAR_PLANE,
+    UNIFORM_SKY_INSCATTER_SAMPLER,
+    UNIFORM_SKY_IRRADIANCE_SAMPLER,
+    UNIFORM_SKY_TRANSMITTANCE_SAMPLER,
 
     UNIFORM_COUNT
 };
@@ -344,6 +380,15 @@ float sqr(float x)
     return x * x;
 }
 
+dja::vec3 getSunDir()
+{
+    float theta = g_lighting.sun.theta;
+    float phi = g_lighting.sun.phi;
+    float tmp = sinf(g_lighting.sun.theta);
+
+    return dja::vec3(tmp * sinf(phi), cosf(theta), tmp * cosf(phi));
+}
+
 static void APIENTRY
 debug_output_logger(
     GLenum source,
@@ -382,13 +427,13 @@ debug_output_logger(
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    } else if(severity == GL_DEBUG_SEVERITY_MEDIUM) {
+    } /*else if(severity == GL_DEBUG_SEVERITY_MEDIUM) {
         LOG("djg_warn: %s %s\n"                 \
                 "-- Begin -- GL_debug_output\n" \
                 "%s\n"                              \
                 "-- End -- GL_debug_output\n",
                 srcstr, typestr, message);
-    }
+    } */
 }
 
 void log_debug_output(void)
@@ -440,6 +485,7 @@ float computeLodFactor()
 void configureTerrainProgram(GLuint glp, GLuint offset)
 {
     float lodFactor = computeLodFactor();
+    dja::vec3 sunDir = getSunDir();
 
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_DMAP_FACTOR + offset],
@@ -447,12 +493,6 @@ void configureTerrainProgram(GLuint glp, GLuint offset)
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_LOD_FACTOR + offset],
         lodFactor);
-    glProgramUniform1i(glp,
-        g_gl.uniforms[UNIFORM_TERRAIN_DMAP_SAMPLER + offset],
-        TEXTURE_DMAP);
-    glProgramUniform1i(glp,
-        g_gl.uniforms[UNIFORM_TERRAIN_SMAP_SAMPLER + offset],
-        TEXTURE_SMAP);
     glProgramUniform1f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_TARGET_EDGE_LENGTH + offset],
         g_terrain.primitivePixelLengthTarget);
@@ -462,6 +502,18 @@ void configureTerrainProgram(GLuint glp, GLuint offset)
     glProgramUniform2f(glp,
         g_gl.uniforms[UNIFORM_TERRAIN_SCREEN_RESOLUTION + offset],
         g_framebuffer.w, g_framebuffer.h);
+    glProgramUniform3f(glp,
+        g_gl.uniforms[UNIFORM_TERRAIN_SUN_DIR + offset],
+        sunDir.x, sunDir.y, sunDir.z);
+    glProgramUniform1i(glp,
+        g_gl.uniforms[UNIFORM_TERRAIN_INSCATTER_SAMPLER + offset],
+        TEXTURE_ATMOSPHERE_INSCATTER);
+    glProgramUniform1i(glp,
+        g_gl.uniforms[UNIFORM_TERRAIN_IRRADIANCE_SAMPLER+ offset],
+        TEXTURE_ATMOSPHERE_IRRADIANCE);
+    glProgramUniform1i(glp,
+        g_gl.uniforms[UNIFORM_TERRAIN_TRANSMITTANCE_SAMPLER + offset],
+        TEXTURE_ATMOSPHERE_TRANSMITTANCE);
 
     GLint locations[] = {TEXTURE_COUNT,
                          TEXTURE_COUNT + 1,
@@ -490,9 +542,21 @@ void configureTopViewProgram()
     glProgramUniform1f(g_gl.programs[PROGRAM_TOPVIEW],
         g_gl.uniforms[UNIFORM_TOPVIEW_DMAP_FACTOR],
         1.0f);
-    glProgramUniform1i(g_gl.programs[PROGRAM_TOPVIEW],
-        g_gl.uniforms[UNIFORM_TOPVIEW_DMAP_SAMPLER],
-        TEXTURE_DMAP);
+}
+
+// -----------------------------------------------------------------------------
+// set Atmosphere program uniforms
+void configureSkyProgram()
+{
+    glProgramUniform1i(g_gl.programs[PROGRAM_SKY],
+                       g_gl.uniforms[UNIFORM_SKY_INSCATTER_SAMPLER],
+                       TEXTURE_ATMOSPHERE_INSCATTER);
+    glProgramUniform1i(g_gl.programs[PROGRAM_SKY],
+                       g_gl.uniforms[UNIFORM_SKY_IRRADIANCE_SAMPLER],
+                       TEXTURE_ATMOSPHERE_IRRADIANCE);
+    glProgramUniform1i(g_gl.programs[PROGRAM_SKY],
+                       g_gl.uniforms[UNIFORM_SKY_TRANSMITTANCE_SAMPLER],
+                       TEXTURE_ATMOSPHERE_TRANSMITTANCE);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -614,6 +678,7 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "FrustumCulling.glsl"));
     djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/LongestEdgeBisection.glsl");
     djgp_push_file(djp, PATH_TO_SRC_DIRECTORY "./shaders/TeraTexture.glsl");
+    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "BrunetonAtmosphere.glsl"));
     djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCommon.glsl"));
     if (g_terrain.method == METHOD_CS) {
         djgp_push_string(djp, "#define BUFFER_BINDING_LEB_NODE_COUNTER %i\n", BUFFER_LEB_NODE_COUNTER);
@@ -673,6 +738,14 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
         glGetUniformLocation(*glp, "u_MinLodVariance");
     g_gl.uniforms[UNIFORM_TERRAIN_SCREEN_RESOLUTION + uniformOffset] =
         glGetUniformLocation(*glp, "u_ScreenResolution");
+    g_gl.uniforms[UNIFORM_TERRAIN_IRRADIANCE_SAMPLER + uniformOffset] =
+        glGetUniformLocation(*glp, "skyIrradianceSampler");
+    g_gl.uniforms[UNIFORM_TERRAIN_INSCATTER_SAMPLER + uniformOffset] =
+        glGetUniformLocation(*glp, "inscatterSampler");
+    g_gl.uniforms[UNIFORM_TERRAIN_TRANSMITTANCE_SAMPLER + uniformOffset] =
+        glGetUniformLocation(*glp, "transmittanceSampler");
+    g_gl.uniforms[UNIFORM_TERRAIN_SUN_DIR + uniformOffset] =
+        glGetUniformLocation(*glp, "u_SunDir");
 
     configureTerrainProgram(*glp, uniformOffset);
 
@@ -835,6 +908,47 @@ bool loadTopViewProgram()
 
 // -----------------------------------------------------------------------------
 /**
+ * Load the Sky Programe
+ *
+ * This program is responsible for rendering Bruneton's atmosphere
+ */
+bool loadSkyProgram()
+{
+    djg_program *djp = djgp_create();
+    GLuint *glp = &g_gl.programs[PROGRAM_SKY];
+    char buf[1024];
+
+    LOG("Loading {Sky-Program}\n");
+    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "BrunetonAtmosphere.glsl"));
+    djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "Sky.glsl"));
+    if (!djgp_to_gl(djp, 450, false, true, glp)) {
+        djgp_release(djp);
+
+        return false;
+    }
+    djgp_release(djp);
+
+    g_gl.uniforms[UNIFORM_SKY_PROJECTION_MATRIX] =
+        glGetUniformLocation(*glp, "u_Projection");
+    g_gl.uniforms[UNIFORM_SKY_INVVIEW_MATRIX] =
+        glGetUniformLocation(*glp, "u_InvView");
+    g_gl.uniforms[UNIFORM_SKY_SUN_DIR] =
+        glGetUniformLocation(*glp, "u_SunDir");
+    g_gl.uniforms[UNIFORM_SKY_FAR_PLANE] =
+        glGetUniformLocation(*glp, "u_FarPlane");
+    g_gl.uniforms[UNIFORM_SKY_IRRADIANCE_SAMPLER] =
+        glGetUniformLocation(*glp, "skyIrradianceSampler");
+    g_gl.uniforms[UNIFORM_SKY_INSCATTER_SAMPLER] =
+        glGetUniformLocation(*glp, "inscatterSampler");
+    g_gl.uniforms[UNIFORM_SKY_TRANSMITTANCE_SAMPLER] =
+        glGetUniformLocation(*glp, "transmittanceSampler");
+    configureSkyProgram();
+
+    return (glGetError() == GL_NO_ERROR);
+}
+
+// -----------------------------------------------------------------------------
+/**
  * Load All Programs
  *
  */
@@ -848,6 +962,7 @@ bool loadPrograms()
     if (v) v &= loadLebReductionPrepassProgram();
     if (v) v &= loadBatchProgram();
     if (v) v &= loadTopViewProgram();
+    if (v) v &= loadSkyProgram();
 
     return v;
 }
@@ -948,6 +1063,7 @@ bool loadSceneFramebufferTexture()
  *
  * This loads an RG32F texture used as a slope map
  */
+#if 0
 void loadNmapTexture(const djg_texture *dmap)
 {
     int w = dmap->next->x;
@@ -999,6 +1115,7 @@ void loadNmapTexture(const djg_texture *dmap)
         GL_CLAMP_TO_EDGE);
     glActiveTexture(GL_TEXTURE0);
 }
+#endif
 
 // -----------------------------------------------------------------------------
 /**
@@ -1008,6 +1125,7 @@ void loadNmapTexture(const djg_texture *dmap)
  */
 bool loadDmapTexture()
 {
+#if 0
     if (!g_terrain.dmap.pathToFile.empty()) {
         djg_texture *djgt = djgt_create(1);
 
@@ -1055,6 +1173,7 @@ bool loadDmapTexture()
         glActiveTexture(GL_TEXTURE0);
         djgt_release(djgt);
     }
+#endif
 
     return (glGetError() == GL_NO_ERROR);
 }
@@ -1073,9 +1192,13 @@ bool loadTeraTexture()
         GL_TEXTURE2 + TEXTURE_COUNT
     };
 
+#if 1
     g_terrain.texture.tt = tt_Load("texture.tt", 1024);
+#else
+    g_terrain.texture.tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", /* cache (not important here) */1024);
+#endif
+    LOG("TextureSize: %i -- PageSize: %i\n", 1 << tt_TextureSize(g_terrain.texture.tt), 1 << tt_PageTextureSize(g_terrain.texture.tt, 0));
     g_terrain.texture.args.pixelsPerTexelTarget = 1.0f;
-
     tt_Displace(g_terrain.texture.tt);
 
     tt_BindPageTextures(g_terrain.texture.tt, textureUnits);
@@ -1083,6 +1206,56 @@ bool loadTeraTexture()
     return (glGetError() == GL_NO_ERROR);
 }
 
+// -----------------------------------------------------------------------------
+bool loadBrunetonAtmosphereTextures()
+{
+    float *data = new float[16*64*3];
+    FILE *f = fopen(PATH_TO_ASSET_DIRECTORY "irradiance.raw", "rb");
+    fread(data, 1, 16*64*3*sizeof(float), f);
+    fclose(f);
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_ATMOSPHERE_IRRADIANCE);
+    glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_ATMOSPHERE_IRRADIANCE]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, 64, 16, 0, GL_RGB, GL_FLOAT, data);
+    delete[] data;
+
+    int res = 64;
+    int nr = res / 2;
+    int nv = res * 2;
+    int nb = res / 2;
+    int na = 8;
+    f = fopen(PATH_TO_ASSET_DIRECTORY "inscatter.raw", "rb");
+    data = new float[nr*nv*nb*na*4];
+    fread(data, 1, nr*nv*nb*na*4*sizeof(float), f);
+    fclose(f);
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_ATMOSPHERE_INSCATTER);
+    glBindTexture(GL_TEXTURE_3D, g_gl.textures[TEXTURE_ATMOSPHERE_INSCATTER]);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, na*nb, nv, nr, 0, GL_RGBA, GL_FLOAT, data);
+    delete[] data;
+
+    data = new float[256*64*3];
+    f = fopen(PATH_TO_ASSET_DIRECTORY "transmittance.raw", "rb");
+    fread(data, 1, 256*64*3*sizeof(float), f);
+    fclose(f);
+    glActiveTexture(GL_TEXTURE0 + TEXTURE_ATMOSPHERE_TRANSMITTANCE);
+    glBindTexture(GL_TEXTURE_2D, g_gl.textures[TEXTURE_ATMOSPHERE_TRANSMITTANCE]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, 256, 64, 0, GL_RGB, GL_FLOAT, data);
+    delete[] data;
+
+    return (glGetError() == GL_NO_ERROR);
+}
 
 // -----------------------------------------------------------------------------
 /**
@@ -1095,6 +1268,7 @@ bool loadTextures()
     if (v) v &= loadSceneFramebufferTexture();
     if (v) v &= loadDmapTexture();
     if (v) v &= loadTeraTexture();
+    if (v) v &= loadBrunetonAtmosphereTextures();
 
     return v;
 }
@@ -1110,22 +1284,8 @@ bool loadTextures()
  *
  * This procedure updates the transformation matrices; it is updated each frame.
  */
-bool loadTerrainVariables()
+dja::mat4 cameraProjectionMatrix()
 {
-    static bool first = true;
-    struct PerFrameVariables {
-        dja::mat4 modelViewMatrix,
-                  modelViewProjectionMatrix;
-        dja::vec4 frustumPlanes[6];
-        dja::vec4 align[2];
-    } variables;
-
-    if (first) {
-        g_gl.streams[STREAM_TERRAIN_VARIABLES] = djgb_create(sizeof(variables));
-        first = false;
-    }
-
-    // extract view and projection matrices
     dja::mat4 projection;
     if (g_camera.projection == PROJECTION_ORTHOGRAPHIC) {
         float ratio = (float)g_framebuffer.w / (float)g_framebuffer.h;
@@ -1139,17 +1299,44 @@ bool loadTerrainVariables()
         projection = dja::mat4::homogeneous::perspective(
             radians(g_camera.fovy),
             (float)g_framebuffer.w / (float)g_framebuffer.h,
-            g_camera.zNear, g_camera.zFar
+            g_camera.zNear + fabs(g_camera.pos.y / 1e3), g_camera.zFar + fabs(g_camera.pos.y / 1e3)
         );
     }
 
+    return projection;
+}
+
+dja::mat4 cameraFrameMatrix()
+{
+    return dja::mat4::homogeneous::translation(g_camera.pos)
+            * dja::mat4::homogeneous::from_mat3(g_camera.axis);
+}
+
+bool loadTerrainVariables()
+{
+    static bool first = true;
+    struct PerFrameVariables {
+        dja::mat4 modelViewMatrix,
+                  modelViewProjectionMatrix,
+                  cameraMatrix,
+                  viewProjectionInverseMatrix;
+        dja::vec4 frustumPlanes[6];
+        dja::vec4 align[10];
+    } variables;
+
+    if (first) {
+        g_gl.streams[STREAM_TERRAIN_VARIABLES] = djgb_create(sizeof(variables));
+        first = false;
+    }
+
+    // extract view and projection matrices
+    dja::mat4 projection = cameraProjectionMatrix();
     float width = g_terrain.dmap.width;
     float height = g_terrain.dmap.height;
     float zMin = g_terrain.dmap.zMin;
     float zMax = g_terrain.dmap.zMax;
     dja::vec3 scale = dja::vec3(width, zMax - zMin, height);
-    dja::mat4 viewInv = dja::mat4::homogeneous::translation(g_camera.pos)
-                      * dja::mat4::homogeneous::from_mat3(g_camera.axis);
+    dja::mat4 viewInv = cameraFrameMatrix();
     dja::mat4 view = dja::inverse(viewInv);
     dja::mat4 model = dja::mat4::homogeneous::translation(dja::vec3(-width / 2.0f, zMin, +height / 2.0f))
                     * dja::mat4::homogeneous::scale(dja::vec3(scale))
@@ -1158,6 +1345,8 @@ bool loadTerrainVariables()
     // set transformations (column-major)
     variables.modelViewMatrix = dja::transpose(view * model);
     variables.modelViewProjectionMatrix = dja::transpose(projection * view * model);
+    variables.cameraMatrix = dja::transpose(viewInv);
+    variables.viewProjectionInverseMatrix = dja::transpose(dja::inverse(projection * view));
 
     // extract frustum planes
     dja::mat4 mvp = variables.modelViewProjectionMatrix;
@@ -1956,6 +2145,25 @@ void renderTerrain()
 }
 
 // -----------------------------------------------------------------------------
+void renderSky()
+{
+    glEnable(GL_DEPTH_TEST);
+    glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_EMPTY]);
+    glUseProgram(g_gl.programs[PROGRAM_SKY]);
+    dja::mat4 projection = cameraProjectionMatrix();
+    dja::mat4 viewInv = cameraFrameMatrix();
+    dja::vec3 sunDir = getSunDir();
+
+    glUniformMatrix4fv(g_gl.uniforms[UNIFORM_SKY_PROJECTION_MATRIX], 1, GL_TRUE, &projection[0][0]);
+    glUniformMatrix4fv(g_gl.uniforms[UNIFORM_SKY_INVVIEW_MATRIX], 1, GL_TRUE, &viewInv[0][0]);
+    glUniform1f(g_gl.uniforms[UNIFORM_SKY_FAR_PLANE], g_camera.zFar);
+    glUniform3f(g_gl.uniforms[UNIFORM_SKY_SUN_DIR], sunDir.x, sunDir.y, sunDir.z);
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisable(GL_DEPTH_TEST);
+}
+
+// -----------------------------------------------------------------------------
 /**
  * Render Scene
  *
@@ -1964,6 +2172,7 @@ void renderTerrain()
 void renderScene()
 {
     renderTerrain();
+    renderSky();
 }
 
 // -----------------------------------------------------------------------------
@@ -2283,9 +2492,18 @@ void mouseMotionCallback(GLFWwindow* window, double x, double y)
         return;
 
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-        g_camera.upAngle-= dx * 5e-3;
-        g_camera.sideAngle-= dy * 5e-3;
-        updateCameraMatrix();
+        if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
+            g_lighting.sun.phi-= dx * 2e-3;
+            g_lighting.sun.theta+= dy * 2e-3;
+            g_lighting.sun.theta = std::max(0.0f, g_lighting.sun.theta);
+            g_lighting.sun.theta = std::min((float)M_PI, g_lighting.sun.theta);
+
+            configureTerrainPrograms();
+        } else {
+            g_camera.upAngle-= dx * 5e-3;
+            g_camera.sideAngle-= dy * 5e-3;
+            updateCameraMatrix();
+        }
     } else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
         dja::mat3 axis = dja::transpose(g_camera.axis);
         g_camera.pos -= axis[0] * dx * 5e-3 * dja::norm(g_camera.pos);

@@ -20,6 +20,7 @@ readonly buffer NodeBuffer {
 #ifdef VERTEX_SHADER
 layout(location = 0) in vec2 i_VertexPos;
 layout(location = 0) out vec2 o_TexCoord;
+layout(location = 1) out vec4 o_WorldPos;
 
 void main()
 {
@@ -58,6 +59,7 @@ void main()
     // set varyings
     gl_Position = attrib.position;
     o_TexCoord  = attrib.texCoord;
+    o_WorldPos  = attrib.worldPos;
 }
 #endif
 
@@ -70,8 +72,10 @@ void main()
 layout(triangles) in;
 layout(triangle_strip, max_vertices = 3) out;
 layout(location = 0) in vec2 i_TexCoord[];
+layout(location = 1) in vec4 i_WorldPos[];
 layout(location = 0) out vec2 o_TexCoord;
-layout(location = 1) noperspective out vec3 o_Distance;
+layout(location = 1) out vec4 o_WorldPos;
+layout(location = 2) noperspective out vec3 o_Distance;
 
 uniform vec2 u_ScreenResolution;
 
@@ -85,6 +89,7 @@ void main()
 
     for (int i = 0; i < 3; ++i) {
         o_TexCoord = i_TexCoord[i];
+        o_WorldPos = i_WorldPos[i];
         o_Distance = vec3(0);
         o_Distance[i] = area * inversesqrt(dot(v[i],v[i]));
         gl_Position = gl_in[i].gl_Position;
@@ -101,7 +106,8 @@ void main()
  */
 #ifdef FRAGMENT_SHADER
 layout(location = 0) in vec2 i_TexCoord;
-layout(location = 1) noperspective in vec3 i_Distance;
+layout(location = 1) in vec4 i_WorldPos;
+layout(location = 2) noperspective in vec3 i_Distance;
 layout(location = 0) out vec4 o_FragColor;
 
 void main()
@@ -112,6 +118,6 @@ void main()
     float nearestDistance = min(min(distanceSquared.x, distanceSquared.y), distanceSquared.z);
     float blendFactor = exp2(-nearestDistance / wireScale);
 
-    o_FragColor = mix(ShadeFragment(i_TexCoord), wireColor, blendFactor);
+    o_FragColor = mix(ShadeFragment(i_TexCoord, i_WorldPos.xyz), wireColor, blendFactor);
 }
 #endif
