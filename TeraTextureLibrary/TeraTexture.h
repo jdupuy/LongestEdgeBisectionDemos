@@ -466,6 +466,7 @@ tt_CreateLayered(
                                          texturesPerPage,
                                          pageTextureSizes,
                                          pageTextureFormats);
+    int64_t pageCount = tt__PageCount(header.depth);
     int64_t bytesPerPage = tt__BytesPerPage(&header);
     uint8_t *pageData = (uint8_t *)TT_MALLOC(bytesPerPage);
     FILE *stream = fopen(file, "wb");
@@ -491,14 +492,20 @@ tt_CreateLayered(
     }
 
     memset(pageData, 0, bytesPerPage);
-    for (int64_t i = 0; i < tt__PageCount(header.depth); ++i) {
+    if (!fseek(stream, (pageCount - 1) * bytesPerPage, SEEK_CUR)) {
         if (fwrite(pageData, bytesPerPage, 1, stream) != 1) {
             TT_LOG("tt_Texture: page dump failed");
             fclose(stream);
 
             return false;
         }
+    } else {
+        TT_LOG("tt_Texture: disk allocation failed");
+        fclose(stream);
+
+        return false;
     }
+
     TT_FREE(pageData);
 
     fclose(stream);
