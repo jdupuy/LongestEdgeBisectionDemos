@@ -20,9 +20,9 @@ TT_Texel TT_TextureFetchGrad(vec2 u, vec2 dudx, vec2 dudy);
 ///////// end header file //////////////////////////
 
 #define TEXTURE_TERRAIN 0
-#define TEXTURE_SAND    1
-#define TEXTURE_GRASS   2
-#define TEXTURE_ROCK    3
+#define TEXTURE_GRASS   1
+#define TEXTURE_ROCK    2
+#define TEXTURE_SAND    3
 #define TEXTURE_COUNT   4
 
 struct TT__TextureDimensions {
@@ -32,11 +32,87 @@ struct TT__TextureDimensions {
 uniform sampler2D TT_TerrainDisplacementSampler;
 uniform sampler2D TT_DetailDisplacementSamplers[];
 uniform sampler2D TT_DetailAlbedoSamplers[];
+uniform sampler2D TT_GaussianDetailSamplers[];   // gaussianized input sampler
+uniform sampler1D TT_InvertGaussianSamplers[];   // table to convert back to color space
 layout (std140, binding = WORLD_SPACE_TEXTURE_DIMENSIONS_BUFFER_BINDING)
 uniform WorldSpaceTextureDimensionsBuffer {
     TT__TextureDimensions TT_WorldSpaceTextureDimensions[TEXTURE_COUNT];
 };
 
+
+// Compute local triangle barycentric coordinates and vertex IDs
+void
+TT__SimplexGrid(
+    vec2 uv,
+    out float w1, out float w2, out float w3,
+    out ivec2 v1, out ivec2 v2, out ivec2 v3
+) {
+    // Scaling of the input
+    uv *= 3.464f; // 2 * sqrt(3)
+
+    // Skew input space into simplex triangle grid
+    const mat2 gridToSkewedGrid = mat2(1.0, 0.0, -0.57735027, 1.15470054);
+    vec2 skewedCoord = gridToSkewedGrid * uv;
+
+    // Compute local triangle vertex IDs and local barycentric coordinates
+    ivec2 baseId = ivec2(floor(skewedCoord));
+    vec3 temp = vec3(fract(skewedCoord), 0);
+    temp.z = 1.0 - temp.x - temp.y;
+
+    if (temp.z > 0.0) {
+        w1 = temp.z;
+        w2 = temp.y;
+        w3 = temp.x;
+        v1 = baseId;
+        v2 = baseId + ivec2(0, 1);
+        v3 = baseId + ivec2(1, 0);
+    } else {
+        w1 = -temp.z;
+        w2 = 1.0 - temp.y;
+        w3 = 1.0 - temp.x;
+        v1 = baseId + ivec2(1, 1);
+        v2 = baseId + ivec2(1, 0);
+        v3 = baseId + ivec2(0, 1);
+    }
+}
+
+vec2 TT__Hash(vec2 p)
+{
+    return fract(sin((p) * mat2(127.1f, 311.7f, 269.5f, 183.3f) )* 43758.5453f);
+}
+
+// By-Example procedural noise at uv
+vec4 TT__StochasticTexture(int samplerID, vec2 uv)
+{
+    // Get simplex info
+    float w1, w2, w3;
+    ivec2 v1, v2, v3;
+    TT__SimplexGrid(uv, w1, w2, w3, v1, v2, v3);
+
+    // Assign random offset to each triangle vertex
+    vec2 uv1 = uv + TT__Hash(v1);
+    vec2 uv2 = uv + TT__Hash(v2);
+    vec2 uv3 = uv + TT__Hash(v3);
+
+    // Fetch Gaussian input
+    vec4 G1 = texture(TT_GaussianDetailSamplers[samplerID], uv1).rgba;
+    vec4 G2 = texture(TT_GaussianDetailSamplers[samplerID], uv2).rgba;
+    vec4 G3 = texture(TT_GaussianDetailSamplers[samplerID], uv3).rgba;
+
+    // Variance-preserving blending
+    vec4 G = w1 * G1 + w2 * G2 + w3 * G3;
+    G-= vec4(0.5f);
+    G*= inversesqrt(w1 * w1 + w2 * w2 + w3 * w3);
+    G+= vec4(0.5f);
+
+    // Fetch prefiltered LUT (T^{-1})
+    float r = texture(TT_InvertGaussianSamplers[samplerID], G.r).r;
+    float g	= texture(TT_InvertGaussianSamplers[samplerID], G.g).g;
+    float b	= texture(TT_InvertGaussianSamplers[samplerID], G.b).b;
+    float a	= texture(TT_InvertGaussianSamplers[samplerID], G.a).a;
+
+    return vec4(r, g, b, a);
+}
 
 /*
     Cubic texture filtering -- based on
@@ -228,6 +304,7 @@ TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
                    terrainDimensions.height / detailDimensions.height);
     int samplerID = textureID - 1;
     vec2 P = sc * u;
+#if 0
     vec2 eps = 1.0f / vec2(textureSize(TT_DetailDisplacementSamplers[samplerID], 0));
     float x1 = textureLod(TT_DetailDisplacementSamplers[samplerID], P - vec2(eps.x, 0), 0.0).r;
     float x2 = textureLod(TT_DetailDisplacementSamplers[samplerID], P + vec2(eps.x, 0), 0.0).r;
@@ -239,6 +316,20 @@ TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
     texel.slope.x = 0.5f * (x2 - x1) / eps.x;
     texel.slope.y = 0.5f * (y2 - y1) / eps.y;
     texel.albedo = texture(TT_DetailAlbedoSamplers[samplerID], P).rgb;
+#else
+    vec2 eps = 1.0f / vec2(textureSize(TT_GaussianDetailSamplers[samplerID], 0));
+    float x1 = TT__StochasticTexture(samplerID, P - vec2(eps.x, 0)).a;
+    float x2 = TT__StochasticTexture(samplerID, P + vec2(eps.x, 0)).a;
+    float y1 = TT__StochasticTexture(samplerID, P - vec2(0, eps.y)).a;
+    float y2 = TT__StochasticTexture(samplerID, P + vec2(0, eps.y)).a;
+    TT_Texel texel;
+
+    vec4 tmp = TT__StochasticTexture(samplerID, P);
+    texel.altitude = tmp.a;
+    texel.slope.x = 0.5f * (x2 - x1) / eps.x;
+    texel.slope.y = 0.5f * (y2 - y1) / eps.y;
+    texel.albedo = tmp.rgb;
+#endif
     TT__ReMapDisplacementData(TT_WorldSpaceTextureDimensions[textureID],
                               texel.altitude, texel.slope);
 
@@ -246,8 +337,8 @@ TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
 }
 
 
-#define WATER_LEVEL     0.0f
-#define SAND_LEVEL      1.0f
+#define WATER_LEVEL     3.0f
+#define SAND_LEVEL      10.0f
 
 void TT_AddWater(vec2 u, inout TT_Texel texel)
 {
@@ -274,7 +365,7 @@ void TT_AddSand(vec2 u, inout TT_Texel texel)
 void TT_AddGrass(vec2 u, inout TT_Texel texel)
 {
     float slopeSqr = dot(texel.slope, texel.slope);
-    float urng = -0.15*TT__FractalBrownianMotion(u * 1e2);
+    float urng = -0.15*TT__FractalBrownianMotion(u * 1e3);
 
     if (slopeSqr <= 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_GRASS, u);
@@ -288,7 +379,7 @@ void TT_AddGrass(vec2 u, inout TT_Texel texel)
 void TT_AddRock(vec2 u, inout TT_Texel texel)
 {
     float slopeSqr = dot(texel.slope, texel.slope);
-    float urng = -0.15*TT__FractalBrownianMotion(u);
+    float urng = -0.15*TT__FractalBrownianMotion(u * 1e3);
 
     if (slopeSqr > 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_ROCK, u);
