@@ -125,6 +125,60 @@ float GaussianToUniform(float x, float sigma)
     return GaussianStdToUniform(x / sigma);
 }
 
+// inverting piecewise linear functions
+float InverseLinear(float yStart, float yEnd, float y)
+{
+    return (y - yStart) / (yEnd - yStart);
+}
+
+float InverseLinearInterval(float xStart, float xEnd,
+                            float yStart, float yEnd,
+                            float y)
+{
+    float scale = xEnd - xStart;
+    float offset = xStart;
+
+    return InverseLinear(yStart, yEnd, y) * scale + offset;
+}
+
+// inverts a function defined with values in [0, 1]x[0, 1]
+std::vector<float> Inverse(const std::vector<float>& cdf, int sizeLog2)
+{
+    int size = (1 << sizeLog2);
+    std::vector<float> qf(size, 0);
+
+    for (int i = 0; i < size; ++i) {
+        float u = (float)i / (size - 1); // in [0, 1]
+        int index = size / 2;
+
+        // binary search the value
+        for (int j = sizeLog2 - 2; j >= 0; --j) {
+            int offset = 1 << j;
+
+            if (u <= cdf[index]) {
+                index-= offset;
+            } else {
+                index+= offset;
+            }
+        }
+
+        // invert linear segment
+        if (u <= cdf[index]) {
+            float xStart = (float)(index - 1) / (size - 1);
+            float xEnd   = (float)(index    ) / (size - 1);
+
+            qf[i] = InverseLinearInterval(xStart, xEnd, cdf[index - 1], cdf[index], u);
+        } else {
+            float xStart = (float)(index + 1) / (size - 1);
+            float xEnd   = (float)(index    ) / (size - 1);
+
+            qf[i] = InverseLinearInterval(xStart, xEnd, cdf[index + 1], cdf[index], u);
+        }
+    }
+
+    return qf;
+}
+
 // -----------------------------------------------------------------------------
 struct AppManager {
     struct {
@@ -164,13 +218,14 @@ struct TextureGenerator {
             PATH_TO_ASSET_DIRECTORY "./sand_01_diff_4k.jpg",
             3.0f, 3.0f, 0.0f, 0.00f
         }, {
-            PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_BUMP_4k.jpg",
+            PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_DEPTH_4k.png",
             PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_COLOR_4k.jpg",
-            3.0f, 3.0f, 0.0f, 0.05f
+            /*3.0f * 2000.0f, 3.0f * 2000.0f, 0.0f, 1.0f * 2000.0f*/
+            3.0f, 3.0f, 0.0f, 0.09f
         }, {
-            PATH_TO_ASSET_DIRECTORY "./ROCK-13_BUMP_4k.jpg",
+            PATH_TO_ASSET_DIRECTORY "./ROCK-13_DEPTH_4k.png",
             PATH_TO_ASSET_DIRECTORY "./ROCK-13_COLOR_4k.jpg",
-            3.0f, 3.0f, 0.0f, 0.7f
+            3.0f, 3.0f, 0.0f, 0.4f
         },
     },
     { 12, 10 }
@@ -748,8 +803,13 @@ void ExportTexture()
     tt_Format formats[]   = {/*albedo*/TT_FORMAT_BC1,
                              /*normals*/TT_FORMAT_BC5,
                              /*displacement*/TT_FORMAT_R16};
+#if 0
     tt_CreateLayered("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", textureRes, 3, pageResolutions, formats);
     tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", /* cache (not important here) */16);
+#else
+    tt_CreateLayered("texture.tt", textureRes, 3, pageResolutions, formats);
+    tt = tt_Load("texture.tt", /* cache (not important here) */16);
+#endif
 
     // allocate memory for raw data
     rawTextureData.albedo.byteSize          = (1 << (2 * pageResolutions[0])) * /* RGBA8 */4;

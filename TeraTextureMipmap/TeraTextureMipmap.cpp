@@ -248,7 +248,11 @@ GLuint LoadVertexArray()
 void Run(int argc, char **argv)
 {
     // load texture
+#if 0
     tt_Texture *tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", 16);
+#else
+    tt_Texture *tt = tt_Load("texture.tt", 16);
+#endif
 
     GLuint vertexArray = LoadVertexArray();
     GLuint program = LoadGenerationProgram();

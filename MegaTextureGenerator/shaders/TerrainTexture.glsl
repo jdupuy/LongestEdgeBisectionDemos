@@ -229,17 +229,16 @@ TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
     int samplerID = textureID - 1;
     vec2 P = sc * u;
     vec2 eps = 1.0f / vec2(textureSize(TT_DetailDisplacementSamplers[samplerID], 0));
-    float x1 = texture(TT_DetailDisplacementSamplers[samplerID], P - vec2(eps.x, 0)).r;
-    float x2 = texture(TT_DetailDisplacementSamplers[samplerID], P + vec2(eps.x, 0)).r;
-    float y1 = texture(TT_DetailDisplacementSamplers[samplerID], P - vec2(0, eps.y)).r;
-    float y2 = texture(TT_DetailDisplacementSamplers[samplerID], P + vec2(0, eps.y)).r;
+    float x1 = textureLod(TT_DetailDisplacementSamplers[samplerID], P - vec2(eps.x, 0), 0.0).r;
+    float x2 = textureLod(TT_DetailDisplacementSamplers[samplerID], P + vec2(eps.x, 0), 0.0).r;
+    float y1 = textureLod(TT_DetailDisplacementSamplers[samplerID], P - vec2(0, eps.y), 0.0).r;
+    float y2 = textureLod(TT_DetailDisplacementSamplers[samplerID], P + vec2(0, eps.y), 0.0).r;
     TT_Texel texel;
 
     texel.altitude = texture(TT_DetailDisplacementSamplers[samplerID], P).r;
     texel.slope.x = 0.5f * (x2 - x1) / eps.x;
     texel.slope.y = 0.5f * (y2 - y1) / eps.y;
     texel.albedo = texture(TT_DetailAlbedoSamplers[samplerID], P).rgb;
-
     TT__ReMapDisplacementData(TT_WorldSpaceTextureDimensions[textureID],
                               texel.altitude, texel.slope);
 
@@ -277,7 +276,7 @@ void TT_AddGrass(vec2 u, inout TT_Texel texel)
     float slopeSqr = dot(texel.slope, texel.slope);
     float urng = -0.15*TT__FractalBrownianMotion(u * 1e2);
 
-    if (slopeSqr <= 0.25f + urng && texel.altitude >= SAND_LEVEL + urng) {
+    if (slopeSqr <= 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_GRASS, u);
 
         texel.altitude+= tmp.altitude;
@@ -289,13 +288,13 @@ void TT_AddGrass(vec2 u, inout TT_Texel texel)
 void TT_AddRock(vec2 u, inout TT_Texel texel)
 {
     float slopeSqr = dot(texel.slope, texel.slope);
-    float urng = -0.15*TT__FractalBrownianMotion(u * 1e2);
+    float urng = -0.15*TT__FractalBrownianMotion(u);
 
-    if (slopeSqr > 0.25f + urng && texel.altitude >= SAND_LEVEL + urng) {
+    if (slopeSqr > 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_ROCK, u);
 
-        texel.altitude+= tmp.altitude * 4.0;
-        texel.slope+= tmp.slope * 4.0;
+        texel.altitude+= tmp.altitude;
+        texel.slope+= tmp.slope;
         texel.albedo = 1.5 * tmp.albedo;
     }
 }
@@ -307,12 +306,12 @@ TT_Texel TT_TextureFetch(vec2 u)
     TT__AddNoise(u, texel);
 
     // Add details maps
-    texel.albedo = vec3(0, 1, 1);
-#if 1
+    //texel.albedo = vec3(0, 1, 1);
     TT_AddRock(u, texel);
     TT_AddGrass(u, texel);
     TT_AddSand(u, texel);
     TT_AddWater(u, texel);
+#if 0
 #endif
 /*
     float slopeMag = dot(texel.slope, texel.slope);
