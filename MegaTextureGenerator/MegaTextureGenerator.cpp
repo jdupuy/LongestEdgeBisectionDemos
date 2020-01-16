@@ -223,8 +223,8 @@ struct TextureGenerator {
             /*3.0f * 2000.0f, 3.0f * 2000.0f, 0.0f, 1.0f * 2000.0f*/
             3.0f, 3.0f, 0.0f, 0.09f
         }, {
-            PATH_TO_ASSET_DIRECTORY "./ROCK-13_DEPTH_4k.png",
-            PATH_TO_ASSET_DIRECTORY "./ROCK-13_COLOR_4k.jpg",
+            PATH_TO_ASSET_DIRECTORY "./ROCK-12_DEPTH_4k.png",
+            PATH_TO_ASSET_DIRECTORY "./ROCK-12_COLOR_4k.jpg",
             3.0f, 3.0f, 0.0f, 0.4f
         },
     },
@@ -799,7 +799,7 @@ void ExportTexture()
 
     // create the tt_Texture file
     TT_LOG("Creating texture file...");
-    int64_t pageResolutions[] = {pageRes, pageRes, pageRes - 1};
+    int64_t pageResolutions[] = {pageRes, pageRes - 1, pageRes - 2};
     tt_Format formats[]   = {/*albedo*/TT_FORMAT_BC1,
                              /*normals*/TT_FORMAT_BC5,
                              /*displacement*/TT_FORMAT_R16};
