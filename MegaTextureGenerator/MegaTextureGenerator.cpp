@@ -215,7 +215,7 @@ struct TextureGenerator {
         int size, pageSize;
     } output;
 } g_textureGenerator = {
-    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f/8.0f, 52660.0f/8.0f, -14.0f/8.0f, 1587.0f/8.0f},
+    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f/16.0f, 52660.0f/16.0f, -14.0f/16.0f, 1587.0f/16.0f},
     {
         {
             PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_DEPTH_4k.png",

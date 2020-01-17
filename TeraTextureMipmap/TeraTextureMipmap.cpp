@@ -10,6 +10,7 @@
 #include <utility>
 #include <stdexcept>
 #include <vector>
+#include <unistd.h>
 
 #define TT_IMPLEMENTATION
 #include "TeraTexture.h"
@@ -248,7 +249,7 @@ GLuint LoadVertexArray()
 void Run(int argc, char **argv)
 {
     // load texture
-#if 0
+#if 1
     tt_Texture *tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", 16);
 #else
     tt_Texture *tt = tt_Load("texture.tt", 16);
@@ -424,6 +425,8 @@ void Run(int argc, char **argv)
                       sizeof(tt__Header) + (uint64_t)bytesPerPage * nodeID + pageTextureByteOffset,
                       SEEK_SET);
                 fwrite(textureData, bytesPerPageTexture, 1, tt->storage.stream);
+
+                usleep(200);   // release thread
             }
         }
 
