@@ -90,9 +90,9 @@ struct DemoData {
     } camera;
     struct {bool freezeLeb, showLeb;} flags;
 } g_demo = {
-    {1, 0},
+    {600, 0},
     {
-        20, 0.6f
+        14, 0.6f
     },
     {
         0, 12

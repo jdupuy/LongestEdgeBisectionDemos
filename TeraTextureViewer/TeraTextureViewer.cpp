@@ -245,7 +245,7 @@ void Load(int argc, char **argv)
         GL_TEXTURE2,
         GL_TEXTURE3
     };
-#if 0
+#if 1
     g_viewer.texture.tt = tt_Load("texture.tt", /* cache size */2048);
 #else
     g_viewer.texture.tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", /* cache size */2048);

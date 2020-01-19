@@ -143,38 +143,44 @@ FilterTriangles(
     vec2 pixelCoord,
     float filterWidth
 ) {
+    float magic = 1.0f / 1.45f;
+    vec2 filterSize = vec2(exp2(-float(nodes.node.depth) * magic));
     vec2 triangle[3] = DecodeTriangleVertices(nodes.node);
-    float weight = CauchyIntegral(triangle, pixelCoord, vec2(filterWidth));
+    float weight = CauchyIntegral(triangle, pixelCoord, filterSize);
     vec3 color = weight * nodeColors[3];
     float nrm = weight;
 
-#if 1
+#if 0
     if (!leb_IsNullNode(nodes.left)) {
+        filterSize = vec2(exp2(-float(nodes.left.depth)  * magic));
         triangle = DecodeTriangleVertices(nodes.left);
-        weight = CauchyIntegral(triangle, pixelCoord, vec2(filterWidth));
+        weight = CauchyIntegral(triangle, pixelCoord, filterSize);
 
         color+= weight * nodeColors[0];
         nrm+= weight;
     }
 
     if (!leb_IsNullNode(nodes.right)) {
+        filterSize = vec2(exp2(-float(nodes.right.depth) * magic));
         triangle = DecodeTriangleVertices(nodes.right);
-        weight = CauchyIntegral(triangle, pixelCoord, vec2(filterWidth));
+        weight = CauchyIntegral(triangle, pixelCoord, filterSize);
 
         color+= weight * nodeColors[1];
         nrm+= weight;
     }
 
     if (!leb_IsNullNode(nodes.edge)) {
+        filterSize = vec2(exp2(-float(nodes.edge.depth) * magic));
         triangle = DecodeTriangleVertices(nodes.edge);
-        weight = CauchyIntegral(triangle, pixelCoord, vec2(filterWidth));
+        weight = CauchyIntegral(triangle, pixelCoord, filterSize);
 
         color+= weight * nodeColors[2];
         nrm+= weight;
     }
 #endif
 
-    return color / nrm;
+    return color;// / nrm;
+    return vec3(nrm / 20.0f);// / nrm;
 }
 
 leb_Node NodeCtor(uint id)
@@ -215,7 +221,7 @@ void main()
         NodeColor(nodes.edge),
         NodeColor(nodes.node)
     );
-    float filterRadius =  exp2(-float(nodes.node.depth) / 1.45f);
+    float filterRadius = exp2(-float(nodes.node.depth) / 1.45f);
     vec3 color = FilterTriangles(nodes, nodeColors, pixelCoord, filterRadius);
 
 #if 0
@@ -224,7 +230,7 @@ void main()
     color = vec3(1.0f) / (1.0f + dot(xStd, xStd) / (b * b));
 #endif
 
-    color = texture(u_ImageSampler, vec3(i_TexCoord, 0)).rgb;
+    //color = texture(u_ImageSampler, vec3(i_TexCoord, 0)).rgb;
     //texel = vec3(E1);
 #if FLAG_WIRE
     o_FragColor = mix(HdrToLdr(color), wireColor, blendFactor);

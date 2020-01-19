@@ -165,7 +165,7 @@ RawTextureStorage GenRawTextureStorage(tt_Format format)
         storage.format = GL_RGBA;
         storage.type   = GL_HALF_FLOAT;
         storage.internalFormat = GL_RGBA16F;
-        storage.bytesPerTexel = 4;
+        storage.bytesPerTexel = 8;
         break;
     }
 
@@ -249,7 +249,7 @@ GLuint LoadVertexArray()
 void Run(int argc, char **argv)
 {
     // load texture
-#if 1
+#if 0
     tt_Texture *tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", 16);
 #else
     tt_Texture *tt = tt_Load("texture.tt", 16);

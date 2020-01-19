@@ -69,7 +69,9 @@ void main()
     if (r > 1.0)
         discard;
 
-    o_FragColor = mix(vec3(0.9), vec3(0), smoothstep(0.25f, 0.5f, r));
+    vec3 innerColor = vec3(0.97,0.75,0.75);
+    vec3 outerColor = vec3(0.86,0.00,0.00);
+    o_FragColor = mix(innerColor, outerColor, smoothstep(0.25f, 0.5f, r));
 }
 
 #endif

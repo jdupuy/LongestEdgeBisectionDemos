@@ -80,8 +80,9 @@ layout(location = 0) out vec3 o_FragColor;
 
 void main()
 {
-    const float wireScale = 1.0; // scale of the wire in pixel
-    vec3 wireColor = vec3(0.7, 0.7, 0.7);
+    const float wireScale = 1.0f; // scale of the wire in pixel
+    vec3 wireColor = vec3(100.0, 200.0, 0.0) / 255.0f;
+    //vec3 wireColor = vec3(1.0,0.50,0.00);
     vec3 distanceSquared = i_Distance * i_Distance;
     float nearestDistance = min(min(distanceSquared.x, distanceSquared.y), distanceSquared.z);
     float blendFactor = exp2(-nearestDistance / wireScale);

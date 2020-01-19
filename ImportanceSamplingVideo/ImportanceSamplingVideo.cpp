@@ -27,7 +27,8 @@
 #define DJ_ALGEBRA_IMPLEMENTATION 1
 #include "dj_algebra.h"
 
-#define VIEWPORT_WIDTH 800
+#define VIEWPORT_WIDTH  1280
+#define VIEWPORT_HEIGHT 720
 
 #ifndef PATH_TO_SRC_DIRECTORY
 #   define PATH_TO_SRC_DIRECTORY "./"
@@ -40,6 +41,10 @@
 #endif
 #define BUFFER_SIZE(x)    ((int)(sizeof(x)/sizeof(x[0])))
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
+
+
+
+#define FLAG_CAPTURE 1
 
 // -----------------------------------------------------------------------------
 struct AppManager {
@@ -57,7 +62,11 @@ struct AppManager {
         "./"
     },
     /*record*/ {
+#if FLAG_CAPTURE
+        true, 0, 0
+#else
         false, 0, 0
+#endif
     },
     /*frame*/  0, -1
 };
@@ -88,20 +97,20 @@ struct DemoData {
         float zoom;
         int tonemap;
     } camera;
-    struct {bool freezeLeb, showLeb;} flags;
+    struct {bool freezeLeb, showLeb, showSamples, animate;} flags;
 } g_demo = {
     {600, 0},
     {
         24, 0.6f
     },
     {
-        0, 12
+        8, 12
     },
     {
         {0.0f, 0.0f},
-        0.75f,
+        1.0f,
         TONEMAP_RAW
-    }, {false, true}
+    }, {false, false, false, true}
 };
 
 enum {
@@ -146,6 +155,7 @@ enum {
 
     UNIFORM_COUNT
 };
+enum {CLOCK_REDUCTION, CLOCK_UPDATE, CLOCK_BATCH, CLOCK_COUNT};
 
 struct OpenGLManager {
     GLuint buffers[BUFFER_COUNT];
@@ -153,6 +163,7 @@ struct OpenGLManager {
     GLuint programs[PROGRAM_COUNT];
     GLuint textures[TEXTURE_COUNT];
     GLint uniforms[UNIFORM_COUNT];
+    djg_clock *clocks[CLOCK_COUNT];
 } g_gl = {0, 0};
 
 // -----------------------------------------------------------------------------
@@ -199,7 +210,7 @@ void ConfigureLebRenderProgram(GLuint program)
     glProgramUniform2f(program,
                        g_gl.uniforms[UNIFORM_LEB_RENDER_FRAMEBUFFER_RESOLUTION],
                        VIEWPORT_WIDTH,
-                       VIEWPORT_WIDTH);
+                       VIEWPORT_HEIGHT);
     glProgramUniform1f(program,
                        g_gl.uniforms[UNIFORM_LEB_RENDER_FRAME_ID],
                        g_demo.video.frameID);
@@ -541,7 +552,7 @@ bool LoadBuffers()
 
 float xf(float x)
 {
-    return pow(x, 4.0f);
+    return pow(x, 3.0f);
 }
 
 void LoadDensityTexture(const djg_texture *djt, int frameID, int frameCount)
@@ -697,6 +708,7 @@ bool LoadVertexArrays()
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+void UpdateLeb();
 bool Load(int argc, char **argv)
 {
     bool isLoaded = true;
@@ -706,6 +718,15 @@ bool Load(int argc, char **argv)
     if (isLoaded) isLoaded = LoadVertexArrays();
     if (isLoaded) isLoaded = LoadPrograms();
 
+    for (int i = 0; i < CLOCK_COUNT; ++i)
+        g_gl.clocks[i] = djgc_create();
+
+#if FLAG_CAPTURE
+    glFinish();
+    for (int i = 0; i < g_demo.leb.depth * 2; ++i)
+        UpdateLeb();
+#endif
+
     return isLoaded;
 }
 
@@ -714,9 +735,12 @@ void Release()
     glDeleteTextures(TEXTURE_COUNT, g_gl.textures);
     glDeleteTextures(BUFFER_COUNT, g_gl.buffers);
     glDeleteTextures(VERTEXARRAY_COUNT, g_gl.vertexArrays);
+
     for (int i = 0; i < PROGRAM_COUNT; ++i)
         glDeleteProgram(g_gl.programs[i]);
 
+    for (int i = 0; i < CLOCK_COUNT; ++i)
+        djgc_release(g_gl.clocks[i]);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -790,9 +814,17 @@ void UpdateLeb()
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      BUFFER_LEB_HEAP,
                      g_gl.buffers[BUFFER_LEB_HEAP]);
+    djgc_start(g_gl.clocks[CLOCK_UPDATE]);
     ComputeLebUpdate();
+    djgc_stop(g_gl.clocks[CLOCK_UPDATE]);
+
+    djgc_start(g_gl.clocks[CLOCK_REDUCTION]);
     ComputeLebReduction();
+    djgc_stop(g_gl.clocks[CLOCK_REDUCTION]);
+
+    djgc_start(g_gl.clocks[CLOCK_BATCH]);
     ComputeLebBatch();
+    djgc_stop(g_gl.clocks[CLOCK_BATCH]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_HEAP, 0);
 }
 
@@ -801,11 +833,10 @@ dja::mat4 GetCameraMatrix()
     float zoomFactor = exp2f(-g_demo.camera.zoom);
     float x = g_demo.camera.pos.x;
     float y = g_demo.camera.pos.y;
-    float aspect = 16.f / 9.f;
 
     return dja::mat4::homogeneous::orthographic(
         x - zoomFactor + 0.50001f, x + zoomFactor + 0.5f,
-        (y - zoomFactor) * aspect + 0.5f, (y + zoomFactor) * aspect + 0.5f,
+        (y - zoomFactor) + 0.5f, (y + zoomFactor) + 0.5f,
         -1.0f, 1.0f
     );
 }
@@ -852,15 +883,17 @@ void RenderSamples()
 
 void UpdateVideo()
 {
-    static int pingPong = 0;
+    if (g_demo.flags.animate) {
+        static int pingPong = 0;
 
-    if (pingPong == 1) {
-        if (++g_demo.video.frameID == g_demo.video.frameCount) {
-            g_demo.video.frameID = 0;
+        if (pingPong == 1) {
+            if (++g_demo.video.frameID == g_demo.video.frameCount) {
+                g_demo.video.frameID = 0;
+            }
         }
-    }
 
-    pingPong = 1 - pingPong;
+        pingPong = 1 - pingPong;
+    }
 }
 
 void Render()
@@ -870,9 +903,10 @@ void Render()
     UpdateVideo();
     UpdateLeb();
 
-    glViewport(256, 0, VIEWPORT_WIDTH, VIEWPORT_WIDTH);
+    glViewport(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     RenderLeb();
-    RenderSamples();
+    if (g_demo.flags.showSamples)
+        RenderSamples();
 }
 
 void RenderGui()
@@ -880,9 +914,10 @@ void RenderGui()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH));
-    ImGui::Begin("Window");
+#if (FLAG_CAPTURE == 0)
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowSize(ImVec2(256, 220));
+    ImGui::Begin("Window", NULL);
     {
         const char* eTonemaps[] = {
             "Uncharted2",
@@ -895,6 +930,8 @@ void RenderGui()
             LoadLebRenderProgram();
         if (ImGui::Checkbox("ShowLeb", &g_demo.flags.showLeb))
             LoadLebRenderProgram();
+        ImGui::Checkbox("ShowSamples", &g_demo.flags.showSamples);
+        ImGui::Checkbox("Animate", &g_demo.flags.animate);
         if (ImGui::SliderFloat("TargetDeviation", &g_demo.leb.targetStdev, 0.0f, 2.0f)) {
             ConfigureLebUpdatePrograms();
         }
@@ -903,12 +940,52 @@ void RenderGui()
         ImGui::Text("Zoom: %f", g_demo.camera.zoom);
     }
     ImGui::End();
+#endif
 
+#if 1
+    ImGui::Begin("Performance");
+    {
+        double cpuDt, gpuDt;
+
+        djgc_ticks(g_gl.clocks[CLOCK_UPDATE], &cpuDt, &gpuDt);
+        ImGui::Text("Update    -- CPU: %.3f%s",
+            cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+            cpuDt < 1. ? "ms" : " s");
+        ImGui::SameLine();
+        ImGui::Text("GPU: %.3f%s",
+            gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+            gpuDt < 1. ? "ms" : " s");
+
+        djgc_ticks(g_gl.clocks[CLOCK_REDUCTION], &cpuDt, &gpuDt);
+        ImGui::Text("Reduction -- CPU: %.3f%s",
+            cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+            cpuDt < 1. ? "ms" : " s");
+        ImGui::SameLine();
+        ImGui::Text("GPU: %.3f%s",
+            gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+            gpuDt < 1. ? "ms" : " s");
+
+        djgc_ticks(g_gl.clocks[CLOCK_BATCH], &cpuDt, &gpuDt);
+        ImGui::Text("Batch     -- CPU: %.3f%s",
+            cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+            cpuDt < 1. ? "ms" : " s");
+        ImGui::SameLine();
+        ImGui::Text("GPU: %.3f%s",
+            gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+            gpuDt < 1. ? "ms" : " s");
+    }
+    ImGui::End();
+#endif
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     // screen recording
     if (g_app.recorder.on) {
+#if FLAG_CAPTURE
+        static int frameCount = 0;
+        if (frameCount == 600 * 2 + 1)
+            exit(0);
+#endif
         char name[64], path[1024];
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
@@ -918,6 +995,10 @@ void RenderGui()
         strcat2(path, g_app.dir.output, name);
         djgt_save_glcolorbuffer_bmp(GL_BACK, GL_RGB, path);
         ++g_app.recorder.frame;
+
+#if FLAG_CAPTURE
+        ++frameCount;
+#endif
     }
 }
 
@@ -1064,7 +1145,7 @@ int main(int argc, char **argv)
 #endif
     // Create the Window
     LOG("Loading {Window-Main}");
-    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH+256, VIEWPORT_WIDTH, "Viewer", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "Viewer", NULL, NULL);
     if (window == NULL) {
         LOG("=> Failure <=");
         glfwTerminate();
