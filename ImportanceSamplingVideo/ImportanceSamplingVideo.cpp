@@ -72,8 +72,9 @@ enum {
 
 struct DemoData {
     struct {
-        const char *path;
-    } image;
+        int frameCount;
+        int frameID;
+    } video;
     struct {
         int depth;
         float targetStdev;
@@ -89,17 +90,17 @@ struct DemoData {
     } camera;
     struct {bool freezeLeb, showLeb;} flags;
 } g_demo = {
-    {PATH_TO_ASSET_DIRECTORY "./kloofendal_48d_partly_cloudy_1k.hdr"},
+    {600, 0},
     {
-        26, 0.05f
+        24, 0.6f
     },
     {
-        1, 8192
+        0, 12
     },
     {
         {0.0f, 0.0f},
         0.75f,
-        TONEMAP_FILMIC
+        TONEMAP_RAW
     }, {false, true}
 };
 
@@ -133,11 +134,13 @@ enum {
 enum {
     UNIFORM_LEB_UPDATE_DENSITY_SAMPLER,
     UNIFORM_LEB_UPDATE_TARGET_VARIANCE,
+    UNIFORM_LEB_UPDATE_FRAME_ID,
 
     UNIFORM_LEB_RENDER_FRAMEBUFFER_RESOLUTION,
     UNIFORM_LEB_RENDER_IMAGE_SAMPLER,
     UNIFORM_LEB_RENDER_DENSITY_SAMPLER,
     UNIFORM_LEB_RENDER_MVP_MATRIX,
+    UNIFORM_LEB_RENDER_FRAME_ID,
 
     UNIFORM_LEB_SAMPLING_MVP_MATRIX,
 
@@ -174,6 +177,9 @@ void ConfigureLebUpdateProgram(GLuint program)
     glProgramUniform1f(program,
                        g_gl.uniforms[UNIFORM_LEB_UPDATE_TARGET_VARIANCE],
                        g_demo.leb.targetStdev * g_demo.leb.targetStdev);
+    glProgramUniform1f(program,
+                       g_gl.uniforms[UNIFORM_LEB_UPDATE_FRAME_ID],
+                       g_demo.video.frameID);
 }
 
 void ConfigureLebUpdatePrograms()
@@ -194,6 +200,9 @@ void ConfigureLebRenderProgram(GLuint program)
                        g_gl.uniforms[UNIFORM_LEB_RENDER_FRAMEBUFFER_RESOLUTION],
                        VIEWPORT_WIDTH,
                        VIEWPORT_WIDTH);
+    glProgramUniform1f(program,
+                       g_gl.uniforms[UNIFORM_LEB_RENDER_FRAME_ID],
+                       g_demo.video.frameID);
 }
 
 
@@ -225,6 +234,8 @@ bool LoadLebUpdateProgram(GLuint *program, const char *options)
         glGetUniformLocation(*program, "u_DensitySampler");
     g_gl.uniforms[UNIFORM_LEB_UPDATE_TARGET_VARIANCE] =
         glGetUniformLocation(*program, "u_TargetVariance");
+    g_gl.uniforms[UNIFORM_LEB_UPDATE_FRAME_ID] =
+        glGetUniformLocation(*program, "u_FrameID");
 
     ConfigureLebUpdateProgram(*program);
 
@@ -292,6 +303,8 @@ bool LoadLebRenderProgram()
         glGetUniformLocation(*program, "u_DensitySampler");
     g_gl.uniforms[UNIFORM_LEB_RENDER_MVP_MATRIX] =
         glGetUniformLocation(*program, "u_ModelViewProjectionMatrix");
+    g_gl.uniforms[UNIFORM_LEB_RENDER_FRAME_ID] =
+        glGetUniformLocation(*program, "u_FrameID");
 
     ConfigureLebRenderProgram(*program);
     djgp_release(djp);
@@ -490,7 +503,7 @@ float VanDerCorputSample(uint32_t x)
 
 bool LoadRandomBuffer()
 {
-    int sampleCount = g_demo.samples.count;
+    int sampleCount = 1 << g_demo.samples.count;
     size_t bufferByteSize = sizeof(float) * sampleCount;
     float *bufferData = (float *)malloc(bufferByteSize);
     GLuint *buffer = &g_gl.buffers[BUFFER_RANDOM];
@@ -526,22 +539,31 @@ bool LoadBuffers()
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-void LoadDensityTexture(const djg_texture *djt)
+float xf(float x)
+{
+    return pow(x, 4.0f);
+}
+
+void LoadDensityTexture(const djg_texture *djt, int frameID, int frameCount)
 {
     int width = djt->next->x;
     int height = djt->next->y;
     float *texels = (float *)malloc(width * height * /*RG*/2 * /*float*/4);
-    const float *texelsIn = (float *)djt->next->texels;
+    const uint8_t *texelsIn = (uint8_t *)djt->next->texels;
     GLuint *texture = &g_gl.textures[TEXTURE_DENSITY];
     float nrm = 0.0f;
 
     for (int j = 0; j < height; ++j)
     for (int i = 0; i < width; ++i) {
             int tmp = i + width * j;
-            float r = texelsIn[0 + 3 * tmp];
-            float g = texelsIn[1 + 3 * tmp];
-            float b = texelsIn[2 + 3 * tmp];
-            float l = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+            float r = (float)texelsIn[0 + 3 * tmp] / 255.f;
+            float g = (float)texelsIn[1 + 3 * tmp] / 255.f;
+            float b = (float)texelsIn[2 + 3 * tmp] / 255.f;
+#if 0
+            float l = 0.2126f * xf(r) + 0.7152f * xf(g) + 0.0722f * xf(b);
+#else
+            float l = xf(0.2126f * r + 0.7152f * g + 0.0722f * b);
+#endif
 
             nrm+= l;
             texels[0 + 2 * tmp] = l;
@@ -554,25 +576,34 @@ void LoadDensityTexture(const djg_texture *djt)
         texels[1 + 2 * i]*= nrm * nrm;
     }
 
-    glGenTextures(1, texture);
     glActiveTexture(GL_TEXTURE0 + TEXTURE_DENSITY);
-    glBindTexture(GL_TEXTURE_2D, *texture);
-    glTexStorage2D(GL_TEXTURE_2D,
-                   djgt__mipcnt(width, height, 0),
-                   GL_RG32F,
-                   width,
-                   height);
-    glTexSubImage2D(GL_TEXTURE_2D,
+    if (frameID == 0) {
+        glGenTextures(1, texture);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, *texture);
+        glTexStorage3D(GL_TEXTURE_2D_ARRAY,
+                       djgt__mipcnt(width, height, 0),
+                       GL_RG32F,
+                       width,
+                       height,
+                       frameCount);
+
+    }
+
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
                     0,
-                    0, 0, width, height,
+                    0, 0, frameID,
+                    width, height, 1,
                     GL_RG,
                     GL_FLOAT,
                     texels);
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    if (frameID == frameCount - 1) {
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
     glActiveTexture(GL_TEXTURE0);
 
     free(texels);
@@ -582,19 +613,29 @@ bool LoadImageTexture()
 {
     LOG("Loading {Image-Texture}");
     djg_texture *djt = djgt_create(3); // force RGB
-    const char *imagePath = g_demo.image.path;
+    const djg_texture *djtIt = djt;
+    int frameCount = g_demo.video.frameCount;
     GLuint *texture = &g_gl.textures[TEXTURE_IMAGE];
 
+    for (int frameID = 0; frameID < frameCount; ++frameID) {
+        char imagePath[1024];
+
+        sprintf(imagePath, PATH_TO_ASSET_DIRECTORY "./beeple/beam%03i.jpg", frameID + 1);
+        djgt_push_image_u8(djt, imagePath, true);
+
+        LoadDensityTexture(djtIt, frameID, frameCount);
+        djtIt = djtIt->next;
+    }
+
+    // load data
     glActiveTexture(GL_TEXTURE0 + TEXTURE_IMAGE);
-    djgt_push_image_hdr(djt, imagePath, true);
-    if (!djgt_to_gl(djt, GL_TEXTURE_2D, GL_RGBA16F, true, true, texture)) {
+    if (!djgt_to_gl(djt, GL_TEXTURE_2D_ARRAY, GL_RGBA8, true, true, texture)) {
         djgt_release(djt);
 
         return false;
     }
     glActiveTexture(GL_TEXTURE0);
 
-    LoadDensityTexture(djt);
     djgt_release(djt);
 
     return true;
@@ -736,6 +777,7 @@ void ComputeLebUpdate()
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER,
                  g_gl.buffers[BUFFER_LEB_DISPATCH]);
     glUseProgram(g_gl.programs[PROGRAM_LEB_MERGE + splitOrMerge]);
+    glUniform1f(g_gl.uniforms[UNIFORM_LEB_UPDATE_FRAME_ID], g_demo.video.frameID);
     glDispatchComputeIndirect(0);
     glMemoryBarrier(GL_ALL_BARRIER_BITS);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
@@ -759,10 +801,11 @@ dja::mat4 GetCameraMatrix()
     float zoomFactor = exp2f(-g_demo.camera.zoom);
     float x = g_demo.camera.pos.x;
     float y = g_demo.camera.pos.y;
+    float aspect = 16.f / 9.f;
 
     return dja::mat4::homogeneous::orthographic(
         x - zoomFactor + 0.50001f, x + zoomFactor + 0.5f,
-        y - zoomFactor + 0.5f, y + zoomFactor + 0.5f,
+        (y - zoomFactor) * aspect + 0.5f, (y + zoomFactor) * aspect + 0.5f,
         -1.0f, 1.0f
     );
 }
@@ -779,6 +822,7 @@ void RenderLeb()
     glUseProgram(g_gl.programs[PROGRAM_LEB_RENDER]);
     glUniformMatrix4fv(g_gl.uniforms[UNIFORM_LEB_RENDER_MVP_MATRIX],
                        1, GL_TRUE, &m[0][0]);
+    glUniform1f(g_gl.uniforms[UNIFORM_LEB_RENDER_FRAME_ID], g_demo.video.frameID);
     glDrawArraysIndirect(GL_POINTS, BUFFER_OFFSET(0));
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_HEAP, 0);
@@ -798,7 +842,7 @@ void RenderSamples()
     glUseProgram(g_gl.programs[PROGRAM_LEB_SAMPLING]);
     glUniformMatrix4fv(g_gl.uniforms[UNIFORM_LEB_SAMPLING_MVP_MATRIX],
                        1, GL_TRUE, &m[0][0]);
-    glDrawArrays(GL_POINTS, 0, g_demo.samples.active);
+    glDrawArrays(GL_POINTS, 0, 1 << g_demo.samples.active);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_HEAP, 0);
     glUseProgram(0);
@@ -806,10 +850,24 @@ void RenderSamples()
     glPointSize(1.0f);
 }
 
+void UpdateVideo()
+{
+    static int pingPong = 0;
+
+    if (pingPong == 1) {
+        if (++g_demo.video.frameID == g_demo.video.frameCount) {
+            g_demo.video.frameID = 0;
+        }
+    }
+
+    pingPong = 1 - pingPong;
+}
+
 void Render()
 {
     glClear(GL_COLOR_BUFFER_BIT);
 
+    UpdateVideo();
     UpdateLeb();
 
     glViewport(256, 0, VIEWPORT_WIDTH, VIEWPORT_WIDTH);
@@ -840,7 +898,7 @@ void RenderGui()
         if (ImGui::SliderFloat("TargetDeviation", &g_demo.leb.targetStdev, 0.0f, 2.0f)) {
             ConfigureLebUpdatePrograms();
         }
-        ImGui::SliderInt("SampleCount", &g_demo.samples.active, 0, 1024);
+        ImGui::SliderInt("SampleCount", &g_demo.samples.active, 0, g_demo.samples.count);
         ImGui::Text("Pos : %f %f", g_demo.camera.pos.x, g_demo.camera.pos.y);
         ImGui::Text("Zoom: %f", g_demo.camera.zoom);
     }

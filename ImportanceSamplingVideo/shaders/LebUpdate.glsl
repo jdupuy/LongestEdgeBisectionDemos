@@ -3,8 +3,9 @@ by Jonathan Dupuy
 
 */
 
-uniform sampler2D u_DensitySampler;
+uniform sampler2DArray u_DensitySampler;
 uniform float u_TargetVariance;
+uniform float u_FrameID;
 
 /*******************************************************************************
  * DecodeTriangleVertices -- Decodes the triangle vertices in local space
@@ -32,7 +33,7 @@ float LevelOfDetail(in const leb_Node node)
     vec2 P = BarycentricInterpolation(triangleVertices, vec2(0.333333f));
     float textureLodCount = float(textureQueryLevels(u_DensitySampler));
     float lodOffset = float(node.depth - 1.0f) / 2.0f;
-    vec2 texel = textureLod(u_DensitySampler, P, textureLodCount - lodOffset).rg;
+    vec2 texel = textureLod(u_DensitySampler, vec3(P, u_FrameID), textureLodCount - lodOffset).rg;
 #if 0
     float var = max(texel.g - texel.r * texel.r, 0.0f);
 
@@ -44,7 +45,7 @@ float LevelOfDetail(in const leb_Node node)
         return  0.0f;
     }
 #else
-    ivec2 densitySize = textureSize(u_DensitySampler, 0);
+    ivec2 densitySize = textureSize(u_DensitySampler, 0).xy;
     texel.r*= float(densitySize.x * densitySize.y);
     float pdf = exp2(float(node.depth));
 
