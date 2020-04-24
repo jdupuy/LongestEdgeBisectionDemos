@@ -118,6 +118,7 @@ void updateCameraMatrix()
 // Terrain Manager
 enum { METHOD_CS, METHOD_TS, METHOD_GS, METHOD_MS };
 enum { SHADING_SNOWY, SHADING_DIFFUSE, SHADING_NORMALS, SHADING_COLOR};
+enum { MESHLET_VAO, MESHLET_SHADER };
 struct TerrainManager {
     struct { bool displace, cull, freeze, wire, topView; } flags;
     struct {
@@ -127,6 +128,8 @@ struct TerrainManager {
     int method;
     int shading;
     int gpuSubd;
+    int meshletDynamic;
+    int meshletSubd;
     float primitivePixelLengthTarget;
     float minLodStdev;
     int maxDepth;
@@ -137,6 +140,8 @@ struct TerrainManager {
     METHOD_CS,
     SHADING_DIFFUSE,
     3,
+    MESHLET_VAO,
+    0,
     7.0f,
     0.1f,
     24,
@@ -600,6 +605,10 @@ bool loadTerrainProgram(GLuint *glp, const char *flag, GLuint uniformOffset)
         djgp_push_string(djp, "#define BUFFER_BINDING_LEB_NODE_BUFFER %i\n", BUFFER_LEB_NODE_BUFFER);
 
         if (strcmp("/* thisIsAHackForComputePass */\n", flag) == 0) {
+            if (g_terrain.meshletDynamic == MESHLET_SHADER) {
+                djgp_push_string(djp, "#define FLAG_MESHLET_DYNAMIC 1\n");
+                djgp_push_string(djp, "#define TERRAIN_MESHLET_SUBD_OFFSET %i\n", std::min(g_terrain.meshletSubd, g_terrain.gpuSubd));
+            }
             if (g_terrain.flags.wire) {
                 djgp_push_file(djp, strcat2(buf, g_app.dir.shader, "TerrainRenderCS_Wire.glsl"));
             } else {
@@ -1256,6 +1265,11 @@ bool loadLebNodeCounterBuffer()
  *
  * This procedure creates a vertex and index buffer that represents a
  * subdividided triangle, which we refer to as a meshlet.
+ *
+ * Alternatively, the triangles of the meshlet can be looked up
+ * in the VS for the CS method. This requires only an empty VAO and avoids
+ * the need to have a second implementation (written in C) of the LEB library.
+ * (loadLebBuffer() should be modified to initialize BUFFER_LEB in a CS)
  */
 bool loadMeshletBuffers()
 {
@@ -1843,11 +1857,20 @@ void lebRenderCs()
                      BUFFER_LEB_NODE_BUFFER,
                      g_gl.buffers[BUFFER_LEB_NODE_BUFFER]);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_gl.buffers[BUFFER_TERRAIN_DRAW_CS]);
-    glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_MESHLET]);
+
+    if (g_terrain.meshletDynamic == MESHLET_SHADER) {
+        glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_EMPTY]);
+    } else {
+        glBindVertexArray(g_gl.vertexArrays[VERTEXARRAY_MESHLET]);
+    }
 
     // render
     glUseProgram(g_gl.programs[PROGRAM_RENDER_ONLY]);
-    glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_SHORT, BUFFER_OFFSET(0));
+    if (g_terrain.meshletDynamic == MESHLET_SHADER) {
+        glDrawArraysIndirect(GL_TRIANGLES, BUFFER_OFFSET(0));
+    } else {
+        glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_SHORT, BUFFER_OFFSET(0));
+    }
 
     // reset GL state
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUFFER_LEB_NODE_BUFFER, 0);
@@ -2060,6 +2083,10 @@ void renderViewer()
                 "Tessellation Shader",
                 "Geometry Shader"
             };
+            std::vector<const char *> eMeshlet = {
+                "VAO",
+                "Shader"
+            };
             if (GLAD_GL_NV_mesh_shader)
                 ePipelines.push_back("Mesh Shader");
 
@@ -2068,7 +2095,11 @@ void renderViewer()
             if (ImGui::Combo("GPU Pipeline", &g_terrain.method, &ePipelines[0], ePipelines.size())) {
                 loadTerrainPrograms();
                 loadBatchProgram();
-            } if (ImGui::Checkbox("Cull", &g_terrain.flags.cull))
+            }
+            if (g_terrain.method == METHOD_CS && ImGui::Combo("Meshlet", &g_terrain.meshletDynamic, &eMeshlet[0], eMeshlet.size())) {
+                loadTerrainPrograms();
+            }
+            if (ImGui::Checkbox("Cull", &g_terrain.flags.cull))
                 loadPrograms();
             ImGui::SameLine();
             if (ImGui::Checkbox("Wire", &g_terrain.flags.wire))
@@ -2100,6 +2131,9 @@ void renderViewer()
                 loadMeshletBuffers();
                 loadMeshletVertexArray();
                 loadPrograms();
+            }
+            if (g_terrain.method == METHOD_CS && ImGui::SliderInt("MeshletSubdOffset", &g_terrain.meshletSubd, 0, 3)) {
+                loadTerrainPrograms();
             }
             if (ImGui::SliderInt("MaxDepth", &g_terrain.maxDepth, 5, 29)) {
                 loadBuffers();

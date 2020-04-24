@@ -18,11 +18,39 @@ readonly buffer NodeBuffer {
  * The vertex shader is empty
  */
 #ifdef VERTEX_SHADER
+#ifndef FLAG_MESHLET_DYNAMIC
 layout(location = 0) in vec2 i_VertexPos;
+#endif
 layout(location = 0) out vec2 o_TexCoord;
+
+#ifdef FLAG_MESHLET_DYNAMIC
+const int u_MeshletSubdivision = TERRAIN_PATCH_SUBD_LEVEL - TERRAIN_MESHLET_SUBD_OFFSET;
+
+vec2 DecodeMeshletVertices(in const leb_Node node, in const int vertexID)
+{
+    const vec3 xPos = vec3(0, 0, 1), yPos = vec3(1, 0, 0);
+    mat2x3 pos = leb_DecodeNodeAttributeArray(node, mat2x3(xPos, yPos));
+    return vec2(pos[0][vertexID], pos[1][vertexID]);
+}
+
+vec2 GetMeshletVertex(int vertexID)
+{
+    const uint meshletIndexCount = 3 << (2 * u_MeshletSubdivision);
+
+    const int staticDepth = int(log2(meshletIndexCount / 3));
+    const uint staticMask = 1u << staticDepth + 1; // for the MSB
+
+    const leb_Node staticNode = leb_Node(int(uint(vertexID / 3) | staticMask), staticDepth);
+    return DecodeMeshletVertices(staticNode, vertexID % 3);
+}
+#endif
 
 void main()
 {
+#ifdef FLAG_MESHLET_DYNAMIC
+    vec2 i_VertexPos = GetMeshletVertex(gl_VertexID);
+#endif
+
     uint nodeID = u_NodeBuffer[gl_InstanceID];
     leb_Node node = leb_Node(nodeID, findMSB(nodeID));
     vec4 triangleVertices[3] = DecodeTriangleVertices(node);
