@@ -1192,13 +1192,13 @@ bool loadTeraTexture()
         GL_TEXTURE2 + TEXTURE_COUNT
     };
 
-#if 1
+#if 0
     g_terrain.texture.tt = tt_Load("texture.tt", 1024);
 #else
-    g_terrain.texture.tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", /* cache (not important here) */1024);
+    g_terrain.texture.tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/terrain.tt", /* cache (not important here) */1024);
 #endif
     LOG("TextureSize: %i -- PageSize: %i\n", 1 << tt_TextureSize(g_terrain.texture.tt), 1 << tt_PageTextureSize(g_terrain.texture.tt, 0));
-    g_terrain.texture.args.pixelsPerTexelTarget = 1.0f;
+    g_terrain.texture.args.pixelsPerTexelTarget = 0.25f;
     tt_Displace(g_terrain.texture.tt);
 
     tt_BindPageTextures(g_terrain.texture.tt, textureUnits);

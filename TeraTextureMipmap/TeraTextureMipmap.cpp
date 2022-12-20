@@ -183,6 +183,7 @@ GLuint LoadTexture(int textureID, GLenum internalFormat, int size)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 16.0f);
     glActiveTexture(GL_TEXTURE0);
 
     return texture;
@@ -199,6 +200,7 @@ GLuint LoadNodesTexture(int textureID, GLenum internalFormat, int size)
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_ANISOTROPY, 16.0f);
     glActiveTexture(GL_TEXTURE0);
 
     return texture;
@@ -249,7 +251,7 @@ GLuint LoadVertexArray()
 void Run(int argc, char **argv)
 {
     // load texture
-#if 0
+#if 1
     tt_Texture *tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", 16);
 #else
     tt_Texture *tt = tt_Load("texture.tt", 16);

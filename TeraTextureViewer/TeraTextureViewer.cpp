@@ -18,6 +18,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#define DJ_ALGEBRA_IMPLEMENTATION 1
+#include "dj_algebra.h"
+
 #define TT_IMPLEMENTATION
 #include "TeraTexture.h"
 
@@ -27,10 +30,9 @@
 #define DJ_OPENGL_IMPLEMENTATION 1
 #include "dj_opengl.h"
 
-#define DJ_ALGEBRA_IMPLEMENTATION 1
-#include "dj_algebra.h"
-
-#define VIEWPORT_WIDTH 800
+#define FLAG_CAPTURE 0
+#define VIEWPORT_WIDTH  1280
+#define VIEWPORT_HEIGHT 1280
 
 #ifndef PATH_TO_SRC_DIRECTORY
 #   define PATH_TO_SRC_DIRECTORY "./"
@@ -119,8 +121,12 @@ struct AppManager {
         PATH_TO_SRC_DIRECTORY "./shaders/",
         "./"
     },
-    /*record*/ {
+/*record*/ {
+#if FLAG_CAPTURE
+        true, 0, 0
+#else
         false, 0, 0
+#endif
     },
     /*frame*/  0, -1
 };
@@ -128,6 +134,7 @@ struct AppManager {
 struct OpenGLManager {
     GLuint vertexArray;
     GLuint program;
+    djg_clock *clock;
 } g_gl = {0, 0};
 
 enum {
@@ -157,8 +164,8 @@ struct ViewerManager {
     {NULL, {0}, 0},
     {
         {0.0f, 0.0f},
-        0.0f,
-        TONEMAP_RAW
+        1.0f,
+        TONEMAP_FILMIC
     }, {false},
     {7, 8}
 };
@@ -245,10 +252,10 @@ void Load(int argc, char **argv)
         GL_TEXTURE2,
         GL_TEXTURE3
     };
-#if 1
+#if 0
     g_viewer.texture.tt = tt_Load("texture.tt", /* cache size */2048);
 #else
-    g_viewer.texture.tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt", /* cache size */2048);
+    g_viewer.texture.tt = tt_Load("/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/terrain.tt", /* cache size */2048);
 #endif
     g_viewer.texture.args.pixelsPerTexelTarget = 1.0f;
 
@@ -256,6 +263,7 @@ void Load(int argc, char **argv)
 
     LoadVertexArray();
     LoadProgram();
+    g_gl.clock = djgc_create();
 }
 
 void Release()
@@ -263,33 +271,124 @@ void Release()
     ReleaseProgram();
     ReleaseVertexArray();
     tt_Release(g_viewer.texture.tt);
+    djgc_release(g_gl.clock);
+}
+
+float lerp(float a, float b, float u)
+{
+    return a + u * (b - a);
+}
+
+float toStd(float x, float xmin, float xmax)
+{
+    return (x - xmin) / (xmax - xmin);
+}
+
+float sinCurve(float u)
+{
+    return -cosf(u * M_PI) * 0.5f + 0.5f;
+}
+
+float getZoom(float u)
+{
+    float seqCnt = 5.0f;
+    float seqFq = 1.0f / seqCnt;
+
+    if (u < seqFq) {
+        float zStart = 1.15f;
+        float zEnd = 4.5f;
+        u = sinCurve(toStd(u, 0.0f, seqFq));
+
+        return lerp(zStart, zEnd, u);
+    } else if (u < 2.0f * seqFq) {
+        float zStart = 4.5f;
+        float zEnd = 8.0f;
+        u = sinCurve(toStd(u, seqFq, 2.0f * seqFq));
+
+        return lerp(zStart, zEnd, u);
+    } else if (u < 3.0f * seqFq) {
+        float zStart = 8.0f;
+        float zEnd = 15.0f;
+        u = sinCurve(toStd(u, 2.0f * seqFq, 3.0f * seqFq));
+
+        return lerp(zStart, zEnd, u);
+    } else /*if (u < 4.0f * seqFq)*/ {
+        float zStart = 15.0f;
+        float zEnd = 1.15f;
+        u = sinCurve(toStd(u, 3.0f * seqFq, 1.0f));
+
+        return lerp(zStart, zEnd, u);
+    }
 }
 
 void UpdateTexture()
 {
     tt_UpdateArgs *args = &g_viewer.texture.args;
+#if FLAG_CAPTURE
+#if 0
+    const float startZ = 1.15f;
+    const float endZ = 15.0f;
+    const int fps = 60;
+    const int duration = 16;
+    const int frameCount = duration * fps;
+    static int frameID = 0;
+    float u = (float)frameID / (frameCount - 1);
+
+    g_viewer.camera.pos.x = 0.049372f;
+    g_viewer.camera.pos.y = 0.012751f;
+    g_viewer.camera.zoom  = getZoom(u);//lerp(startZ, endZ, u);
+#else
+    const float startZ = 1.15f;
+    const float endZ = 15.0f;
+    const int fps = 1;
+    const int duration = 10;
+    const int frameCount = duration * fps;
+    static int frameID = 0;
+    float u = (float)frameID / (frameCount - 1);
+
+    g_viewer.camera.pos.x = 0.048351f;
+    g_viewer.camera.pos.y = 0.012752f;
+    g_viewer.camera.zoom  = lerp(startZ, endZ, u);
+#endif
+
+    //modelView = mvStart + (0.0f * mvEnd);//(mvEnd - mvStart));
+
+    if (frameID == frameCount)
+        exit(0);
+#endif
     float zoomFactor = exp2f(-g_viewer.camera.zoom);
     float x = g_viewer.camera.pos.x;
     float y = g_viewer.camera.pos.y;
-    dja::mat4 modelView = dja::mat4::homogeneous::orthographic(
-        x - zoomFactor + 0.50001f, x + zoomFactor + 0.5f,
-        y - zoomFactor + 0.5f, y + zoomFactor + 0.5f,
+
+    dja::mat4 model = dja::mat4::homogeneous::translation(dja::vec3(-0.5f, -0.5f, 0.0f));
+    dja::mat4 view = dja::mat4::homogeneous::translation(dja::vec3(x, y, 0.0f));
+
+    dja::mat4 projection = dja::mat4::homogeneous::orthographic(
+        -zoomFactor, +zoomFactor,
+        -zoomFactor, +zoomFactor,
         -1.0f, 1.0f
     );
-    dja::mat4 projection = dja::mat4(1.0f);
+    //dja::mat4 frustumZoom = dja::mat4::homogeneous::orthographic(
+    //    -1.0f, 1.0f,
+    //    -1.0f, 1.0f,
+    //    -1.0f, 1.0f
+    //);
+    dja::mat4 modelView = view * model;
     dja::mat4 mvp = projection * modelView;
 
     modelView = dja::transpose(modelView);
     mvp = dja::transpose(mvp);
+    modelView = mvp;
+    //mvp = dja::mat4(1.0f);
 
     //
     memcpy(args->matrices.modelView, &modelView, sizeof(modelView));
     memcpy(args->matrices.modelViewProjection, &mvp, sizeof(mvp));
     args->projection = TT_PROJECTION_ORTHOGRAPHIC;
     args->worldSpaceImagePlaneAtUnitDepth.width = 2.0f * zoomFactor;
-    args->worldSpaceImagePlaneAtUnitDepth.height = 2.0f * zoomFactor;
+    args->worldSpaceImagePlaneAtUnitDepth.height = 2.0f * zoomFactor * VIEWPORT_HEIGHT / (float)VIEWPORT_WIDTH;
     args->framebuffer.width = VIEWPORT_WIDTH;
-    args->framebuffer.height= VIEWPORT_WIDTH;
+    args->framebuffer.height= VIEWPORT_HEIGHT;
 
     // updload MVP
     glProgramUniformMatrix4fv(
@@ -298,17 +397,28 @@ void UpdateTexture()
         1, GL_FALSE, &mvp[0][0]
     );
 
+#if FLAG_CAPTURE
+    if (true || frameID == 0) {
+        for (int i = 0; i < 16; ++i) {
+            tt_Update(g_viewer.texture.tt, args);
+        }
+    }
+    ++frameID;
+#endif
     if (!g_viewer.flags.freezeTexture)
         tt_Update(g_viewer.texture.tt, args);
+
 }
 
 void Render()
 {
+    djgc_start(g_gl.clock);
     UpdateTexture();
+    djgc_stop(g_gl.clock);
 
     glDisable(GL_CULL_FACE);
     glClear(GL_COLOR_BUFFER_BIT);
-    glViewport(256, 0, VIEWPORT_WIDTH, VIEWPORT_WIDTH);
+    glViewport(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      g_viewer.bufferIndex.indirection,
                      tt_IndirectionBuffer(g_viewer.texture.tt));
@@ -332,8 +442,10 @@ void RenderGui()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH));
+    //ImGui::ShowDemoWindow();
+#if FLAG_CAPTURE == 0
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowSize(ImVec2(256, 200));
     ImGui::Begin("Window");
     {
         int texturesPerPage = tt_TexturesPerPage(g_viewer.texture.tt);
@@ -359,6 +471,52 @@ void RenderGui()
         ImGui::Text("NodeCount: %i", leb_NodeCount(g_viewer.texture.tt->cache.leb));
     }
     ImGui::End();
+#endif
+
+#if 0
+    ImGui::Begin("Streaming Performance");
+    {
+        double cpuDt, gpuDt;
+
+        djgc_ticks(g_gl.clock, &cpuDt, &gpuDt);
+        //ImGui::Text("Timing -- CPU: %.3f%s",
+        //    cpuDt < 1. ? cpuDt * 1e3 : cpuDt,
+        //    cpuDt < 1. ? "ms" : " s");
+        //ImGui::SameLine();
+        //ImGui::Text("GPU: %.3f%s",
+        //    gpuDt < 1. ? gpuDt * 1e3 : gpuDt,
+        //    gpuDt < 1. ? "ms" : " s");
+
+        static float values_cpu[60] = { 0 };
+        static float values_gpu[60] = { 0 };
+        static int offset = 0;
+        static float refresh_time = 0;
+
+        if (refresh_time == 0)
+          refresh_time = ImGui::GetTime();
+
+        while (refresh_time < ImGui::GetTime())
+        {
+            values_cpu[offset] = cpuDt * 1e3;
+            values_gpu[offset] = gpuDt * 1e3;
+
+            offset = (offset+1) % IM_ARRAYSIZE(values_cpu);
+            refresh_time+= 0.25f;
+        }
+
+        ImGui::PlotLines("CPU (ms)", values_cpu,
+                         IM_ARRAYSIZE(values_cpu), offset,
+                         std::to_string(cpuDt * 1e3).c_str(),
+                         0.0f, 12.0f, ImVec2(320, 80));
+        ImGui::PlotLines("GPU (ms)", values_gpu,
+                         IM_ARRAYSIZE(values_gpu), offset,
+                         std::to_string(gpuDt * 1e3).c_str(),
+                         0.0f, 12.0f, ImVec2(320, 80));
+
+        //ImGui::PlotLines("History", )
+    }
+    ImGui::End();
+#endif
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -405,6 +563,15 @@ KeyboardCallback(
             }
             g_app.recorder.on = !g_app.recorder.on;
         break;
+        case GLFW_KEY_T: {
+            static int cnt = 0;
+            char buf[1024];
+
+            snprintf(buf, 1024, "screenshot%03i", cnt);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            djgt_save_glcolorbuffer_bmp(GL_FRONT, GL_RGBA, buf);
+            ++cnt;
+        } break;
         default: break;
         }
     }
@@ -434,8 +601,8 @@ void MouseMotionCallback(GLFWwindow* window, double x, double y)
         float sc = exp2f(-g_viewer.camera.zoom);
         float dx = x - x0, dy = y - y0;
 
-        g_viewer.camera.pos.x-= dx * sc * 2e-3;
-        g_viewer.camera.pos.y+= dy * sc * 2e-3;
+        g_viewer.camera.pos.x+= dx * sc * 2e-3;
+        g_viewer.camera.pos.y-= dy * sc * 2e-3;
     } else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
         g_viewer.camera.zoom+= (x - x0) * 1e-2;
 
@@ -467,7 +634,7 @@ int main(int argc, char **argv)
 #endif
     // Create the Window
     LOG("Loading {Window-Main}\n");
-    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH+256, VIEWPORT_WIDTH, "Viewer", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "Viewer", NULL, NULL);
     if (window == NULL) {
         LOG("=> Failure <=\n");
         glfwTerminate();

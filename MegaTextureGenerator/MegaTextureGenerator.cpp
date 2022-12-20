@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <vector>
 #include <array>
+#include <unistd.h> // sleep
 
 #define VIEWPORT_WIDTH 1200
 
@@ -200,6 +201,7 @@ enum {
     DETAIL_MAP_COUNT
 };
 
+#define SCALE 8000.0f
 struct TextureGenerator {
     struct {
         const char *pathToFile;     // path to input displacement map
@@ -215,25 +217,28 @@ struct TextureGenerator {
         int size, pageSize;
     } output;
 } g_textureGenerator = {
-    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f/16.0f, 52660.0f/16.0f, -14.0f/16.0f, 1587.0f/16.0f},
+    {PATH_TO_ASSET_DIRECTORY "./kauai.png", 52660.0f/32.0f, 52660.0f/32.0f, -14.0f/32.0f, 1587.0f/32.0f},
     {
         {
             PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_DEPTH_4k.png",
             PATH_TO_ASSET_DIRECTORY "./ForestFloor-06_COLOR_4k.jpg",
-            /*3.0f * 2000.0f, 3.0f * 2000.0f, 0.0f, 1.0f * 2000.0f*/
-            3.0f, 3.0f, 0.0f, 0.09f
+            52660.0f/SCALE, 52660.0f/SCALE, 0.0f, 1587.0f/SCALE
+            //3.0f * 100.0f, 3.0f * 100.0f, 0.0f, 0.09f * 100.0f
+            //3.0f, 3.0f, 0.0f, 0.09f
         }, {
             PATH_TO_ASSET_DIRECTORY "./ROCK-13_DEPTH_4k.png",
             PATH_TO_ASSET_DIRECTORY "./ROCK-13_COLOR_4k.jpg",
-            5.0f, 5.0f, 0.0f, 0.5f
+            52660.0f/SCALE * 5.0f / 3.0f, 52660.0f/SCALE * 5.0f / 3.0f, 0.0f, 1587.0f/SCALE * 3.5f
+            //5.0f, 5.0f, 0.0f, 0.5f
         }, {
             PATH_TO_ASSET_DIRECTORY "./sand_01_bump_4k.jpg",
             PATH_TO_ASSET_DIRECTORY "./sand_01_diff_4k.jpg",
-            3.0f, 3.0f, 0.0f, 0.00f
+            52660.0f/SCALE * 5.0f / 3.0f, 52660.0f/SCALE * 5.0f / 3.0f, 0.0f, 1587.0f/SCALE / 8.0f
         },
     },
     { 12, 10 }
 };
+#undef SCALE
 
 struct TextureViewer {
     struct {
@@ -936,6 +941,8 @@ void ExportTexture()
                rawTextureData.displacement.byteSize,
                1, tt->storage.stream);
 
+        usleep(200);   // release thread
+
         // create null node then move to ceil nodes
         if (nodeID == 0)
             nodeID+= (1 << tt->storage.header.depth) - 1;
@@ -1006,7 +1013,7 @@ void MouseMotionCallback(GLFWwindow* window, double x, double y)
         g_viewer.camera.pos.x-= dx * sc * 2e-3;
         g_viewer.camera.pos.y+= dy * sc * 2e-3;
     } else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-        g_viewer.camera.zoom+= (x - x0) * 1e-2;
+        g_viewer.camera.zoom+= (x - x0) * 1e-3;
 
         if (g_viewer.camera.zoom < -1.0f)
             g_viewer.camera.zoom = -1.0f;

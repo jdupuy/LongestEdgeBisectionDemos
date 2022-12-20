@@ -95,8 +95,9 @@ void main()
         vec2 uv = BarycentricInterpolation(vec2[3](p1, p2, p3), u);
         TT_Texel texel = TT_TextureFetch(uv);
 
+        float displacementScale = 32.0f;
         o_Albedo = vec4(texel.albedo, 1.0);
-        o_Displacement = (texel.altitude + 14.0f / 16.0f) / (1587.0f / 16.0f + 14.0f / 16.0f);
+        o_Displacement = (texel.altitude + 14.0f / displacementScale) / (1600.0f / displacementScale + 14.0f / displacementScale);
         o_Normal = SlopeToSquare(texel.slope);
     } else /* NULL node */{
         o_Albedo = vec4(1.0);

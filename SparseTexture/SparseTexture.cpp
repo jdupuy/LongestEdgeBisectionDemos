@@ -988,7 +988,7 @@ bool loadLebTexture()
 
         g_terrain.mt = mt_Create(textureCount, /*64MiB*/1 << 26);
 
-        tt_Create("test.tt", TT_FORMAT_RGB, 12, 8);
+        //tt_Create("test.tt", TT_FORMAT_RGB, 12, 8);
         g_terrain.tt = tt_Load("test.tt", 256);
         if (!g_terrain.tt)
             LOG("tt_Texture FAILED\n");

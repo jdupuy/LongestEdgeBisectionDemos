@@ -708,7 +708,7 @@ bool loadLebReductionPrepassProgram()
     djgp_push_string(djp, "#define BUFFER_BINDING_LEB %i\n", BUFFER_LEB);
     djgp_push_string(djp, "#define LEB_REDUCTION_PREPASS\n");
     djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisection.glsl");
-    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisectionSumReduction.glsl");
+    djgp_push_file(djp, PATH_TO_LEB_GLSL_LIBRARY "LongestEdgeBisectionSumReductionPrepass.glsl");
     if (!djgp_to_gl(djp, 450, false, true, glp)) {
         djgp_release(djp);
 

@@ -45,7 +45,7 @@ float LevelOfDetail(in const leb_Node node)
     }
 #else
     ivec2 densitySize = textureSize(u_DensitySampler, 0);
-    texel.r*= float(densitySize.x * densitySize.y);
+    texel.r*= float(densitySize.x * densitySize.y) / 100.0;
     float pdf = exp2(float(node.depth));
 
     if (pdf < texel.r) {

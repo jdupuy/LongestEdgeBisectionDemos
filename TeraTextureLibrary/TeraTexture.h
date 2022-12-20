@@ -635,7 +635,7 @@ static bool tt__LoadCacheTextures(tt_Texture *tt)
                            textureSize, textureSize, tt->cache.capacity);
         glTextureParameteri(*texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(*texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(*texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(*texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTextureParameteri(*texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     }
 
@@ -1368,9 +1368,13 @@ tt__StreamLodFactor(
     float nearPlaneHeight = (float)args->worldSpaceImagePlaneAtUnitDepth.height;
     float targetLength = nearPlaneHeight * (pixelsPerTexelTarget / virtualResolution);
     float isPerspective = (float)args->projection;
-
+#if 1
     p->lodFactor[0] = 2.0f * (isPerspective - log2f(targetLength));
     p->lodFactor[1] = isPerspective;
+#else
+    p->lodFactor[0] = 2.0f * (isPerspective - log2f(targetLength));
+    p->lodFactor[1] = isPerspective;
+#endif
 }
 
 
@@ -1601,7 +1605,7 @@ static void tt__ProducePage(tt_Texture *tt, const tt__Page *page)
     pageData = (uint8_t *)glMapBufferRange(
         GL_PIXEL_UNPACK_BUFFER,
         streamByteOffset, streamByteSize,
-        GL_MAP_WRITE_BIT /*| GL_MAP_UNSYNCHRONIZED_BIT*/ // XXX: UNSYNCHRONIZED sometimes produces shitty results
+        GL_MAP_WRITE_BIT /*| GL_MAP_UNSYNCHRONIZED_BIT */// XXX: UNSYNCHRONIZED sometimes produces shitty results
     );
 
     fseek(tt->storage.stream,
@@ -1707,7 +1711,65 @@ static tt__Page *tt__LoadPage(tt_Texture *tt, uint32_t key)
     return page;
 }
 
-static void tt__UpdateIndirectionBuffer(tt_Texture *tt)
+bool CullNode(const tt_UpdateArgs *args, leb_Node node)
+{
+    struct {float x, y;} v[3], bb[2];
+    float attribArray[][3] = {
+        {0.0f, 0.0f, 1.5f},
+        {1.5f, 0.0f, 0.0f}
+    };
+
+    leb_DecodeNodeAttributeArray_Quad(node, 2, attribArray);
+    v[0] = {attribArray[0][0], attribArray[1][0]};
+    v[1] = {attribArray[0][1], attribArray[1][1]};
+    v[2] = {attribArray[0][2], attribArray[1][2]};
+
+    tt__UpdateParameters parameters;
+
+#define MVP args->matrices.modelViewProjection
+#define PLANES parameters.frustumPlanes
+    for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 2; ++j) {
+        float x = MVP[3 + 4 * 0] + (j == 0 ? MVP[i + 4 * 0] : -MVP[i + 4 * 0]);
+        float y = MVP[3 + 4 * 1] + (j == 0 ? MVP[i + 4 * 1] : -MVP[i + 4 * 1]);
+        float z = MVP[3 + 4 * 2] + (j == 0 ? MVP[i + 4 * 2] : -MVP[i + 4 * 2]);
+        float w = MVP[3 + 4 * 3] + (j == 0 ? MVP[i + 4 * 3] : -MVP[i + 4 * 3]);
+        float nrm = sqrtf(x * x + y * y + z * z);
+
+        PLANES[i * 2 + j].x = x * nrm;
+        PLANES[i * 2 + j].y = y * nrm;
+        PLANES[i * 2 + j].z = z * nrm;
+        PLANES[i * 2 + j].w = w * nrm;
+    }
+
+
+    bb[0].x = fmin(fmin(v[0].x, v[1].x), v[2].x) - 0.25f;
+    bb[0].y = fmin(fmin(v[0].y, v[1].y), v[2].y) - 0.25f;
+    bb[0].x = fmax(fmax(v[0].x, v[1].x), v[2].x) + 0.25f;
+    bb[0].y = fmax(fmax(v[0].y, v[1].y), v[2].y) + 0.25f;
+
+    float a = 1.0f;
+
+    for (int i = 0; i < 6 && a >= 0.0f; ++i) {
+        struct {float x, y, z;} n = {
+            PLANES[i].x > 0.0f ? bb[0].x : bb[1].x,
+            PLANES[i].y > 0.0f ? bb[0].y : bb[1].y,
+            PLANES[i].z > 0.0f ? 0.0f    : 1.0f,
+        };
+
+        a = n.x * PLANES[i].x
+          + n.y * PLANES[i].y
+          + n.z * PLANES[i].z
+          + 1.0f * PLANES[i].w;
+    }
+
+#undef PLANES
+#undef MVP
+    return (a >= 0.0);
+
+}
+
+static void tt__UpdateIndirectionBuffer(tt_Texture *tt, const tt_UpdateArgs *args)
 {
     int32_t nodeCount = leb_NodeCount(tt->cache.leb);
 
@@ -1721,9 +1783,19 @@ static void tt__UpdateIndirectionBuffer(tt_Texture *tt)
 
         for (int64_t i = 0; i < nodeCount; ++i) {
             leb_Node node = leb_DecodeNode(tt->cache.leb, i);
+#if 1 // cull non visible nodes
+            if (CullNode(args, node)) {
+                const tt__Page *page = tt__LoadPage(tt, node.id);
+
+                map[i] = page->textureID;
+            } else {
+                map[i] = 0;
+            }
+#else
             const tt__Page *page = tt__LoadPage(tt, node.id);
 
             map[i] = page->textureID;
+#endif
         }
 
         glUnmapNamedBuffer(buffers[TT__UPDATER_GL_BUFFER_INDIRECTION]);
@@ -1747,7 +1819,7 @@ TTDEF void tt_Update(tt_Texture *tt, const tt_UpdateArgs *args)
     tt__UpdateLeb(tt, args);
 
     if (tt__LebAsynchronousReadBack(tt)) {
-        tt__UpdateIndirectionBuffer(tt);
+        tt__UpdateIndirectionBuffer(tt, args);
     }
 }
 

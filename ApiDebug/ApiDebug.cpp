@@ -450,6 +450,11 @@ void mouseScrollCallback(GLFWwindow* /*window*/, double, double)
 // -----------------------------------------------------------------------------
 int main(int argc, char **argv)
 {
+    leb_Node node = {27, 4};
+    leb_SameDepthNeighborIDs ids = leb_DecodeSameDepthNeighborIDs(node);
+    printf("%i %i %i %i\n", ids.left, ids.right, ids.edge, ids._reserved);
+    abort();
+
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);

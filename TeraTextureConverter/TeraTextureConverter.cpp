@@ -48,6 +48,7 @@ GLuint LoadInputTexture(const char *pathToFile, bool isHdr)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 16.0f);
     glActiveTexture(GL_TEXTURE0);
 
     return gl;
@@ -64,6 +65,7 @@ GLuint LoadTexture(int textureID, GLenum internalFormat, int size)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 16.0f);
     glActiveTexture(GL_TEXTURE0);
 
     return texture;
@@ -149,8 +151,13 @@ void Run(int argc, char **argv)
 
     // create the tt_Texture file
     TT_LOG("Creating %s texture", isHdr ? "HDR" : "LDR");
-    tt_Create("texture.tt", textureRes, pageRes, isHdr ? TT_FORMAT_BC6 : TT_FORMAT_BC1);
-    tt = tt_Load("texture.tt", 256);
+#if 0
+    const char *pathToTTFile = "texture.tt";
+#else
+    const char *pathToTTFile = "/media/jdups/a7182ac4-4b59-4450-87ec-1b89a0cf1d8f/texture.tt";
+#endif
+    tt_Create(pathToTTFile, textureRes, pageRes, isHdr ? TT_FORMAT_BC6 : TT_FORMAT_BC1);
+    tt = tt_Load(pathToTTFile, 16);
 
     // allocate data
     glGetTextureLevelParameteriv(textures[TEXTURE_PAGE], 0,

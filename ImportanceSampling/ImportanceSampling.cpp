@@ -27,7 +27,8 @@
 #define DJ_ALGEBRA_IMPLEMENTATION 1
 #include "dj_algebra.h"
 
-#define VIEWPORT_WIDTH 800
+#define VIEWPORT_WIDTH  (512)
+#define VIEWPORT_HEIGHT (256)
 
 #ifndef PATH_TO_SRC_DIRECTORY
 #   define PATH_TO_SRC_DIRECTORY "./"
@@ -89,16 +90,24 @@ struct DemoData {
     } camera;
     struct {bool freezeLeb, showLeb;} flags;
 } g_demo = {
-    {PATH_TO_ASSET_DIRECTORY "./kloofendal_48d_partly_cloudy_1k.hdr"},
+    {PATH_TO_ASSET_DIRECTORY "./old_bus_depot_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./rooitou_park_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./vignaioli_night_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./aircraft_workshop_01_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./machine_shop_01_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./urban_street_03_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./colorful_studio_1k.hdr"},
+    //{PATH_TO_ASSET_DIRECTORY "./moulton_falls_train_tunnel_east_1k.hdr"},
+
     {
-        26, 0.05f
+        22, 0.05f
     },
     {
-        1, 8192
+        0, 8192
     },
     {
         {0.0f, 0.0f},
-        0.75f,
+        1.0f,
         TONEMAP_FILMIC
     }, {false, true}
 };
@@ -193,7 +202,7 @@ void ConfigureLebRenderProgram(GLuint program)
     glProgramUniform2f(program,
                        g_gl.uniforms[UNIFORM_LEB_RENDER_FRAMEBUFFER_RESOLUTION],
                        VIEWPORT_WIDTH,
-                       VIEWPORT_WIDTH);
+                       VIEWPORT_HEIGHT);
 }
 
 
@@ -587,7 +596,7 @@ bool LoadImageTexture()
 
     glActiveTexture(GL_TEXTURE0 + TEXTURE_IMAGE);
     djgt_push_image_hdr(djt, imagePath, true);
-    if (!djgt_to_gl(djt, GL_TEXTURE_2D, GL_RGBA16F, true, true, texture)) {
+    if (!djgt_to_gl(djt, GL_TEXTURE_2D, GL_RGBA32F, true, true, texture)) {
         djgt_release(djt);
 
         return false;
@@ -812,7 +821,7 @@ void Render()
 
     UpdateLeb();
 
-    glViewport(256, 0, VIEWPORT_WIDTH, VIEWPORT_WIDTH);
+    glViewport(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     RenderLeb();
     RenderSamples();
 }
@@ -822,8 +831,9 @@ void RenderGui()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(256, VIEWPORT_WIDTH));
+#if 0
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowSize(ImVec2(256, 300));
     ImGui::Begin("Window");
     {
         const char* eTonemaps[] = {
@@ -845,7 +855,7 @@ void RenderGui()
         ImGui::Text("Zoom: %f", g_demo.camera.zoom);
     }
     ImGui::End();
-
+#endif
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -891,6 +901,15 @@ KeyboardCallback(
             }
             g_app.recorder.on = !g_app.recorder.on;
         break;
+        case GLFW_KEY_T:
+        {
+            char name[64], path[1024];
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            sprintf(name, "screenshot");
+            strcat2(path, g_app.dir.output, name);
+            djgt_save_glcolorbuffer_bmp(GL_FRONT, GL_RGB, path);
+        } break;
         default: break;
         }
     }
@@ -1006,7 +1025,7 @@ int main(int argc, char **argv)
 #endif
     // Create the Window
     LOG("Loading {Window-Main}");
-    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH+256, VIEWPORT_WIDTH, "Viewer", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "Viewer", NULL, NULL);
     if (window == NULL) {
         LOG("=> Failure <=");
         glfwTerminate();

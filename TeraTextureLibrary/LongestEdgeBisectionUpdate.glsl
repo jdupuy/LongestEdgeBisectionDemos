@@ -149,7 +149,7 @@ void main(void)
 
         // splitting update
 #if FLAG_SPLIT
-        if (targetLod.x > 1.0) {
+        if (targetLod.x > float(node.depth)) {
             leb_SplitNodeConforming_Quad(lebID, node);
         }
 #endif
@@ -157,8 +157,8 @@ void main(void)
 #if FLAG_MERGE
         if (true) {
             leb_DiamondParent diamond = leb_DecodeDiamondParent_Quad(node);
-            bool shouldMergeBase = LevelOfDetail(DecodeTriangleVertices(diamond.base)).x < 1.0;
-            bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x < 1.0;
+            bool shouldMergeBase = LevelOfDetail(DecodeTriangleVertices(diamond.base)).x + 1.0 < float(node.depth);
+            bool shouldMergeTop = LevelOfDetail(DecodeTriangleVertices(diamond.top)).x  + 1.0 < float(node.depth);
 
             if (shouldMergeBase && shouldMergeTop) {
                 leb_MergeNodeConforming_Quad(lebID, node, diamond);

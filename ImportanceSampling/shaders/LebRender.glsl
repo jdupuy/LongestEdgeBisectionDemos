@@ -80,14 +80,14 @@ layout(location = 0) out vec3 o_FragColor;
 void main()
 {
     const float wireScale = 1.0; // scale of the wire in pixel
-    vec3 wireColor = vec3(0.7, 0.7, 0.7);
+    vec3 wireColor = vec3(0.0, 0.0, 0.0);
     vec3 distanceSquared = i_Distance * i_Distance;
     float nearestDistance = min(min(distanceSquared.x, distanceSquared.y), distanceSquared.z);
     float blendFactor = exp2(-nearestDistance / wireScale);
     float E1 = texture(u_DensitySampler, i_TexCoord).r;
     float E2 = texture(u_DensitySampler, i_TexCoord).g;
     float Var = clamp(E2 - E1 * E1, 0.0f, 1.0f);
-    vec3 texel = texture(u_ImageSampler, i_TexCoord).rgb;
+    vec3 texel = 1.0*texture(u_ImageSampler, i_TexCoord).rgb;
 
 #if FLAG_WIRE
     o_FragColor = mix(HdrToLdr(texel), wireColor, blendFactor);

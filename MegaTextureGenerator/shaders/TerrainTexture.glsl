@@ -337,29 +337,40 @@ TT_Texel TT__TextureFetch_Detail(int textureID, vec2 u)
 }
 
 
-#define WATER_LEVEL     3.0f
-#define SAND_LEVEL      10.0f
+#define WATER_LEVEL     0.0f
+#define SAND_LEVEL      1.0f
 
 void TT_AddWater(vec2 u, inout TT_Texel texel)
 {
-    float urng = 0.0*TT__FractalBrownianMotion(u * 1e4) + 0.5;
+    float urng = -0.015*TT__FractalBrownianMotion(u * 1e4) + 0.75;
 
     if (texel.altitude - urng <= WATER_LEVEL) {
         texel.albedo = vec3(0, 0, 1);
+        texel.slope = vec2(0);
     }
 }
 
 void TT_AddSand(vec2 u, inout TT_Texel texel)
 {
-    float urng = 0.0*TT__FractalBrownianMotion(u * 1e4);
+    float urng = -0.015*TT__FractalBrownianMotion(u * 1e4) + 0.75;
 
-    if (texel.altitude < SAND_LEVEL + urng) {
+#if 1
+    if (texel.altitude - urng < SAND_LEVEL && texel.altitude - urng > WATER_LEVEL) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_SAND, u);
 
         texel.altitude+= tmp.altitude;
         texel.slope+= tmp.slope;
         texel.albedo = tmp.albedo;
     }
+#else
+    if (true) {
+        TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_SAND, u);
+
+        texel.altitude = tmp.altitude / 8.0f;
+        texel.slope = tmp.slope / 8.0f;
+        texel.albedo = tmp.albedo;
+    }
+#endif
 }
 
 void TT_AddGrass(vec2 u, inout TT_Texel texel)
@@ -367,6 +378,7 @@ void TT_AddGrass(vec2 u, inout TT_Texel texel)
     float slopeSqr = dot(texel.slope, texel.slope);
     float urng = -0.15*TT__FractalBrownianMotion(u * 1e3);
 
+#if 1
     if (slopeSqr <= 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_GRASS, u);
 
@@ -374,6 +386,15 @@ void TT_AddGrass(vec2 u, inout TT_Texel texel)
         texel.slope+= tmp.slope;
         texel.albedo = tmp.albedo;
     }
+#else
+    if (true) {
+        TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_GRASS, u);
+
+        texel.altitude+= tmp.altitude;
+        texel.slope+= tmp.slope;
+        texel.albedo = tmp.albedo;
+    }
+#endif
 }
 
 void TT_AddRock(vec2 u, inout TT_Texel texel)
@@ -381,13 +402,23 @@ void TT_AddRock(vec2 u, inout TT_Texel texel)
     float slopeSqr = dot(texel.slope, texel.slope);
     float urng = -0.15*TT__FractalBrownianMotion(u * 1e3);
 
+#if 1
     if (slopeSqr > 0.5f + urng && texel.altitude >= SAND_LEVEL + urng) {
         TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_ROCK, u);
 
         texel.altitude+= tmp.altitude;
         texel.slope+= tmp.slope;
+        texel.albedo = tmp.albedo;
+    }
+#else
+    if (true) {
+        TT_Texel tmp = TT__TextureFetch_Detail(TEXTURE_ROCK, u);
+
+        texel.altitude = tmp.altitude;
+        texel.slope = tmp.slope;
         texel.albedo = 1.5 * tmp.albedo;
     }
+#endif
 }
 
 TT_Texel TT_TextureFetch(vec2 u)
